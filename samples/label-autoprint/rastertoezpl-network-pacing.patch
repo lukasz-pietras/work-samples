@@ -1,0 +1,55 @@
+--- a/src/rastertoezpl.c	2026-10-30 13:52:02.303899470 +0100
++++ b/src/rastertoezpl.c	2026-10-30 13:53:22.696554518 +0100
+@@ -98,6 +98,36 @@
+ void	CancelJob(int sig);
+ void	OutputLine(ppd_file_t *ppd, cups_page_header2_t *header, int y);
+ void	GDXCompress(unsigned char *line, int length, int row);
++void	GDXPace(size_t bytes);
++
++/*
++ * Output pacing: some GoDEX network interfaces (e.g. G330 on port 9100)
++ * silently drop graphic data when it arrives at full LAN speed, which
++ * prints as blank horizontal bands. Flush and pause every GDX_PACE_CHUNK
++ * bytes. GDX_PACE_US=0 in the environment disables pacing.
++ */
++#define GDX_PACE_CHUNK	512
++#define GDX_PACE_US	25000
++
++void
++GDXPace(size_t bytes)
++{
++  static size_t pending = 0;
++  static long   pause_us = -1;
++
++  if (pause_us < 0) {
++    const char *env = getenv("GDX_PACE_US");
++    pause_us = env ? atol(env) : GDX_PACE_US;
++  }
++  if (pause_us == 0)
++    return;
++  pending += bytes;
++  if (pending >= GDX_PACE_CHUNK) {
++    fflush(stdout);
++    usleep((useconds_t)pause_us);
++    pending = 0;
++  }
++}
+ 
+ 
+ /*
+@@ -455,6 +485,7 @@
+     printf("Q0,%d,%d,1" GDX_EOL, row, length);
+     fwrite(line, 1, length, stdout);
+     printf(GDX_EOL);
++    GDXPace(length + 20);
+     return;
+   }
+ 
+@@ -490,6 +521,7 @@
+           fwrite(CompBuffer + begin + j*length,
+             1, i - begin - zeros + 1, stdout);
+     	printf(GDX_EOL);
++        GDXPace((size_t)(i - begin - zeros + 1) * count + 20);
+         begin = -1;
+         zeros = 0;
+       }

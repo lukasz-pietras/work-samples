@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch ~/Downloads for Apaczka waybills to print on the Godex
+
+[Path]
+PathChanged=%h/Downloads
+Unit=apaczka-label-print.service
+
+[Install]
+WantedBy=default.target

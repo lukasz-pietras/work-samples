@@ -1,0 +1,824 @@
+{
+  "name": "lunae · Stany magazynowe",
+  "nodes": [
+    {
+      "id": "ff451c38-a371-4662-9c41-a95a6f459201",
+      "name": "Co 30 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "d7b4996a-b103-4819-b14f-59901687410c",
+      "name": "Ustawienia",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "low-max",
+              "name": "low_max",
+              "value": 2,
+              "type": "number"
+            },
+            {
+              "id": "mode",
+              "name": "mode",
+              "value": "={{ $('Poniedziałek 08:00').isExecuted ? 'weekly' : 'check' }}",
+              "type": "string"
+            },
+            {
+              "id": "graph-version",
+              "name": "graph_version",
+              "value": "v27.0",
+              "type": "string"
+            },
+            {
+              "id": "ad-account",
+              "name": "ad_account",
+              "value": "act_<AD_ACCOUNT_ID>",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "4a66cf67-f67c-45c4-9918-a912b3fbc9d9",
+      "name": "Pobierz produkty",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://lunae.pl/wp-json/wc/v3/products",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wooCommerceApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "publish"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "_fields",
+              "value": "id,name,type,status,permalink,manage_stock,stock_quantity,stock_status,price"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !Array.isArray($response.body) || $response.body.length < 100 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 10
+            }
+          }
+        }
+      },
+      "credentials": {
+        "wooCommerceApi": {
+          "id": "REDACTED",
+          "name": "WooCommerce · lunae.pl (read-only)"
+        }
+      }
+    },
+    {
+      "id": "cffe967b-fe80-4a93-b291-92237d0aa799",
+      "name": "Pobierz warianty",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        720,
+        300
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://lunae.pl/wp-json/wc/v3/products/{{ $json.id }}/variations",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wooCommerceApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "_fields",
+              "value": "id,parent_id,status,attributes,manage_stock,stock_quantity,stock_status,price"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "wooCommerceApi": {
+          "id": "REDACTED",
+          "name": "WooCommerce · lunae.pl (read-only)"
+        }
+      }
+    },
+    {
+      "id": "3902514c-6f68-47ff-99e7-4607a897c1d3",
+      "name": "Normalizuj stany",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Łączy produkty + warianty w jedną listę z poziomem OK / LOW / OUT.\n// Próg niskiego stanu ustawiasz w węźle \"Ustawienia\" (low_max).\nconst cfg = $('Ustawienia').first().json;\nconst LOW_MAX = Number(cfg.low_max);\nconst decode = s => String(s || '').split('&amp;').join('&').split('&#8211;').join('–').split('&#8217;').join('’').split('&#039;').join(\"'\").split('&quot;').join('\"');\nconst rawProducts = $('Pobierz produkty').all().map(i => i.json);\nconst products = rawProducts.filter(p => p && p.id && (!p.status || p.status === 'publish'));\nconst varsByParent = {};\nfor (const it of $input.all()) {\n  const v = it.json;\n  if (!v || !v.id) continue;\n  if (v.status && v.status !== 'publish') continue;\n  let pid = v.parent_id;\n  if (!pid && it.pairedItem) {\n    const pi = Array.isArray(it.pairedItem) ? it.pairedItem[0] : it.pairedItem;\n    const src = pi && rawProducts[pi.item];\n    if (src) pid = src.id;\n  }\n  if (!pid) continue;\n  (varsByParent[pid] = varsByParent[pid] || []).push(v);\n}\nconst num = x => { const n = parseFloat(x); return isFinite(n) ? n : 0; };\nconst qtyOf = x => (x === null || x === undefined || x === '') ? 0 : Number(x);\nconst levelOf = (qty, status) => qty !== null\n  ? (qty <= 0 ? 'OUT' : (qty <= LOW_MAX ? 'LOW' : 'OK'))\n  : (status === 'instock' ? 'OK' : 'OUT');\nconst rows = [];\nfor (const p of products) {\n  const name = decode(p.name);\n  const parentQty = p.manage_stock === true ? qtyOf(p.stock_quantity) : null;\n  const vs = varsByParent[p.id] || [];\n  if (p.type === 'variable') {\n    for (const v of vs) {\n      let qty = null;\n      let pool = 'v' + v.id;\n      if (v.manage_stock === true) qty = qtyOf(v.stock_quantity);\n      else if (v.manage_stock === 'parent') { qty = parentQty; pool = 'p' + p.id; }\n      const label = (v.attributes || []).map(a => decode(a.option || a.name)).filter(Boolean).join(' / ') || ('#' + v.id);\n      rows.push({ variation_id: v.id, product_id: p.id, product: name, variant: label, qty, level: levelOf(qty, v.stock_status), price: num(v.price), permalink: p.permalink, pool });\n    }\n  } else {\n    rows.push({ variation_id: p.id, product_id: p.id, product: name, variant: '', qty: parentQty, level: levelOf(parentQty, p.stock_status), price: num(p.price), permalink: p.permalink, pool: 'p' + p.id });\n  }\n}\nconst pools = {};\nfor (const r of rows) if (r.qty !== null && !(r.pool in pools)) pools[r.pool] = r;\nlet units = 0;\nlet value = 0;\nfor (const k of Object.keys(pools)) {\n  const r = pools[k];\n  if (r.qty > 0) { units += r.qty; value += r.qty * r.price; }\n}\nconst unknown = rows.filter(r => r.qty === null && r.level === 'OK').length;\nreturn [{ json: {\n  mode: cfg.mode,\n  low_max: LOW_MAX,\n  rows,\n  totals: { units, value: Math.round(value * 100) / 100, unknown, variants: rows.length, products: products.length }\n} }];"
+      }
+    },
+    {
+      "id": "20b16308-43c3-4198-acd2-c74ca240dd3c",
+      "name": "Przegląd tygodniowy?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1200,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.mode }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "weekly"
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "746ca006-7a09-4176-8cfc-c610ec41ec24",
+      "name": "Zbuduj przegląd tygodniowy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const n = $('Normalizuj stany').first().json;\nconst NL = String.fromCharCode(10);\nconst money = v => {\n  const parts = (Math.round(v * 100) / 100).toFixed(2).split('.');\n  let s = parts[0];\n  let out = '';\n  while (s.length > 3) { out = ' ' + s.slice(-3) + out; s = s.slice(0, -3); }\n  return s + out + ',' + parts[1] + ' zł';\n};\nconst fmtQty = r => r.qty === null ? 'brak' : String(r.qty);\nconst groups = {};\nconst order = [];\nfor (const r of n.rows) {\n  if (r.level === 'OK') continue;\n  if (!groups[r.product_id]) { groups[r.product_id] = { name: r.product, url: r.permalink, out: [], low: [] }; order.push(r.product_id); }\n  const label = r.variant || 'produkt';\n  if (r.level === 'OUT') groups[r.product_id].out.push(label);\n  else groups[r.product_id].low.push(label + ' (' + fmtQty(r) + ')');\n}\nconst lowCount = n.rows.filter(r => r.level === 'LOW').length;\nconst outCount = n.rows.filter(r => r.level === 'OUT').length;\nconst lines = [];\nfor (const pid of order) {\n  const g = groups[pid];\n  const bits = [];\n  if (g.out.length) bits.push('brak: ' + g.out.join(', '));\n  if (g.low.length) bits.push('niski: ' + g.low.join(', '));\n  lines.push('**[' + g.name + '](' + g.url + ')** — ' + bits.join(' · '));\n}\nlet description = lines.length ? '' : 'Wszystkie warianty powyżej progu niskiego stanu.';\nlet shown = 0;\nfor (const l of lines) {\n  if ((description + l).length > 3700) break;\n  description += (description ? NL : '') + l;\n  shown += 1;\n}\nif (shown < lines.length) description += NL + '… i jeszcze ' + (lines.length - shown) + ' produktów';\nif (n.totals.unknown > 0) description += NL + NL + '_' + n.totals.unknown + ' wariantów bez śledzenia ilości (nie liczone w sumach)._';\nconst embed = {\n  title: '📦 Stany magazynowe — przegląd tygodniowy',\n  description,\n  color: outCount > 0 ? 15158332 : (lowCount > 0 ? 15844367 : 3066993),\n  fields: [\n    { name: 'Sztuk na stanie', value: n.totals.units + ' szt.', inline: true },\n    { name: 'Wartość (brutto)', value: money(n.totals.value), inline: true },\n    { name: 'Niski stan / brak', value: lowCount + ' / ' + outCount + ' wariantów', inline: true }\n  ],\n  footer: { text: 'Niski stan = 1–' + n.low_max + ' szt. · ' + n.totals.variants + ' wariantów w ' + n.totals.products + ' produktach' },\n  timestamp: new Date().toISOString()\n};\nreturn [{ json: { embed: JSON.stringify(embed), lowCount, outCount, units: n.totals.units, value: n.totals.value } }];"
+      }
+    },
+    {
+      "id": "cfe326d4-0877-4eac-9779-02c50b289f0d",
+      "name": "Wyślij przegląd",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        520
+      ],
+      "parameters": {
+        "authentication": "webhook",
+        "operation": "sendLegacy",
+        "content": "",
+        "options": {},
+        "embeds": {
+          "values": [
+            {
+              "inputMethod": "json",
+              "json": "={{ $json.embed }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "REDACTED",
+          "name": "Discord · lunae (webhook)"
+        }
+      }
+    },
+    {
+      "id": "cf810a35-d733-47ec-b6df-7274d2b0c885",
+      "name": "Odczytaj poprzedni stan",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        1440,
+        200
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "NJXfqGKZYnvqjTXH",
+          "cachedResultName": "lunae_stock_state"
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "id": "7670fc0e-cec4-4f1e-ac48-710b7ea2dffe",
+      "name": "Porównaj stany",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1680,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Porównuje bieżące stany z zapisanymi w lunae_stock_state.\n// Pusta tabela = pierwsze uruchomienie: zapis bez alertów + jedno podsumowanie \"stan początkowy\".\nconst cur = $('Normalizuj stany').first().json;\nconst prev = $input.all().map(i => i.json).filter(r => r && r.variation_id !== undefined && r.variation_id !== null);\nconst firstRun = prev.length === 0;\nconst prevById = {};\nfor (const r of prev) prevById[Number(r.variation_id)] = r;\nconst nowIso = new Date().toISOString();\nconst toRow = r => ({ variation_id: r.variation_id, product_id: r.product_id, product: r.product, variant: r.variant, level: r.level, qty: r.qty, updated_at: nowIso });\nconst kindOf = (from, to) => to === 'OUT' ? 'out' : (to === 'LOW' ? ((from === 'OK' || from === 'NEW') ? 'low' : 'back') : 'back');\nconst transitions = [];\nconst upserts = [];\nfor (const r of cur.rows) {\n  const p = prevById[Number(r.variation_id)];\n  if (!p) {\n    upserts.push(toRow(r));\n    if (!firstRun && r.level !== 'OK') transitions.push(Object.assign({}, r, { from: 'NEW', prevQty: null, kind: kindOf('NEW', r.level) }));\n    continue;\n  }\n  const pq = (p.qty === undefined || p.qty === null || p.qty === '') ? null : Number(p.qty);\n  if (p.level !== r.level) {\n    transitions.push(Object.assign({}, r, { from: p.level, prevQty: pq, kind: kindOf(p.level, r.level) }));\n    upserts.push(toRow(r));\n  } else if (pq !== r.qty || p.product !== r.product || p.variant !== r.variant) {\n    upserts.push(toRow(r));\n  }\n}\nconst byProduct = {};\nfor (const r of cur.rows) (byProduct[r.product_id] = byProduct[r.product_id] || []).push(r);\nconst candidatePids = firstRun\n  ? Object.keys(byProduct).map(Number)\n  : Array.from(new Set(transitions.filter(t => t.kind === 'out').map(t => t.product_id)));\nconst soldOut = candidatePids\n  .filter(pid => byProduct[pid] && byProduct[pid].length && byProduct[pid].every(r => r.level === 'OUT'))\n  .map(pid => ({ product_id: pid, name: byProduct[pid][0].product, permalink: byProduct[pid][0].permalink }));\nreturn [{ json: {\n  firstRun,\n  hasMessage: firstRun || transitions.length > 0,\n  needMeta: soldOut.length > 0,\n  transitions,\n  soldOut,\n  upserts,\n  current: firstRun ? cur.rows.filter(r => r.level !== 'OK') : [],\n  totals: cur.totals,\n  low_max: cur.low_max\n} }];"
+      }
+    },
+    {
+      "id": "ae4c963b-78e7-4d3c-af2c-61cd6eef5b89",
+      "name": "Jest co wysłać?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1920,
+        200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.hasMessage }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "600ae8bd-09f6-4aee-99ab-a2cd14addc51",
+      "name": "Cały produkt wyprzedany?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2160,
+        100
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.needMeta }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "90cd8800-37f0-4540-898f-d12facdc258c",
+      "name": "Meta: aktywne reklamy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "onError": "continueRegularOutput",
+      "position": [
+        2400,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://graph.facebook.com/{{ $('Ustawienia').first().json.graph_version }}/{{ $('Ustawienia').first().json.ad_account }}/ads",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "effective_status",
+              "value": "[\"ACTIVE\"]"
+            },
+            {
+              "name": "fields",
+              "value": "name,effective_status,creative{name,title,body,link_url,object_story_spec,asset_feed_spec,url_tags}"
+            },
+            {
+              "name": "limit",
+              "value": "200"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "REDACTED",
+          "name": "Meta Graph · lunae ads (ads_read)"
+        }
+      }
+    },
+    {
+      "id": "b8f1f4d9-a039-43b9-879d-5c321cd25466",
+      "name": "Złóż wiadomość",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        100
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const c = $('Porównaj stany').first().json;\nconst NL = String.fromCharCode(10);\nconst stamp = $now.setZone('Europe/Warsaw').toFormat('dd.MM.yyyy HH:mm');\n// --- Meta: aktywne reklamy kierujące na wyprzedany produkt (tylko odczyt) ---\nconst adsByProduct = {};\nlet metaNote = '';\nif (c.needMeta) {\n  let m = null;\n  try { m = $('Meta: aktywne reklamy').isExecuted ? $('Meta: aktywne reklamy').first().json : null; } catch (e) { m = null; }\n  if (!m || m.error || !Array.isArray(m.data)) {\n    metaNote = '_(nie udało się sprawdzić reklam w Meta)_';\n  } else {\n    for (const p of c.soldOut) {\n      const name = String(p.name || '').toLowerCase().trim();\n      let slugPath = '';\n      try { slugPath = new URL(p.permalink).pathname.toLowerCase().replace(/[/]+$/, ''); } catch (e) { slugPath = ''; }\n      const tokens = [name, name.split(' ').join('-'), slugPath].filter(t => t && t.length >= 6);\n      const hits = m.data.filter(ad => {\n        const hay = JSON.stringify({ n: ad.name, c: ad.creative || {} }).toLowerCase();\n        let decoded = hay;\n        try { decoded = decodeURIComponent(hay); } catch (e) { decoded = hay; }\n        return tokens.some(t => hay.includes(t) || decoded.includes(t));\n      });\n      if (hits.length) adsByProduct[p.product_id] = hits.map(a => a.name);\n    }\n  }\n}\nconst fmtQty = (q, lvl) => q === null || q === undefined ? (lvl === 'OUT' ? 'brak' : 'dostępny') : q + ' szt.';\nconst levelPL = { OK: 'ok', LOW: 'niski', OUT: 'brak', NEW: 'nowy' };\nconst kindPL = { low: 'niski stan', out: 'wyprzedane', back: 'znów dostępne' };\nconst soldOutIds = {};\nfor (const p of c.soldOut) soldOutIds[p.product_id] = true;\nconst soldOutLines = pid => {\n  if (!soldOutIds[pid]) return [];\n  const out = ['  Cały produkt wyprzedany.'];\n  if (adsByProduct[pid]) out.push('  ⚠️ reklama nadal aktywna: ' + adsByProduct[pid].join(', '));\n  else if (metaNote) out.push('  ' + metaNote);\n  return out;\n};\nconst blocks = [];\nlet header;\nif (c.firstRun) {\n  header = '📦 **Stany magazynowe — stan początkowy** · ' + stamp + NL +\n    'Monitoring włączony: ' + c.totals.variants + ' wariantów, ' + c.totals.units + ' szt. Niski stan = 1–' + c.low_max + ' szt. Kolejne wiadomości tylko przy zmianach.';\n  const groups = {};\n  const order = [];\n  for (const r of c.current) {\n    if (!groups[r.product_id]) { groups[r.product_id] = { name: r.product, url: r.permalink, out: [], low: [] }; order.push(r.product_id); }\n    if (r.level === 'OUT') groups[r.product_id].out.push(r.variant || 'produkt');\n    else groups[r.product_id].low.push((r.variant || 'produkt') + ' (' + fmtQty(r.qty, r.level) + ')');\n  }\n  if (!order.length) blocks.push(['Wszystkie warianty powyżej progu.']);\n  for (const pid of order) {\n    const g = groups[pid];\n    const bits = [];\n    if (g.out.length) bits.push('brak: ' + g.out.join(', '));\n    if (g.low.length) bits.push('niski: ' + g.low.join(', '));\n    blocks.push(['**' + g.name + '** — ' + bits.join(' · ') + ' — <' + g.url + '>'].concat(soldOutLines(pid)));\n  }\n} else {\n  const anyOut = c.transitions.some(t => t.kind === 'out');\n  const anyLow = c.transitions.some(t => t.kind === 'low');\n  const emoji = anyOut ? '🔴' : (anyLow ? '🟡' : '🟢');\n  header = emoji + ' **Stany magazynowe — zmiany** · ' + stamp;\n  const rank = { out: 0, low: 1, back: 2 };\n  const groups = {};\n  const order = [];\n  const sorted = c.transitions.slice().sort((a, b) => rank[a.kind] - rank[b.kind]);\n  for (const t of sorted) {\n    if (!groups[t.product_id]) { groups[t.product_id] = { name: t.product, url: t.permalink, items: [] }; order.push(t.product_id); }\n    const was = t.prevQty !== null && t.prevQty !== undefined ? ' (było ' + t.prevQty + ')' : (t.from === 'NEW' ? ' (nowy wariant)' : ' (wcześniej: ' + levelPL[t.from] + ')');\n    groups[t.product_id].items.push('• ' + (t.variant || 'produkt') + ': ' + fmtQty(t.qty, t.level) + was + ' — ' + kindPL[t.kind]);\n  }\n  for (const pid of order) {\n    const g = groups[pid];\n    blocks.push(['**' + g.name + '** — <' + g.url + '>'].concat(g.items, soldOutLines(pid)));\n  }\n}\nlet content = header;\nlet shown = 0;\nfor (const b of blocks) {\n  const chunk = NL + b.join(NL);\n  if ((content + chunk).length > 1880) break;\n  content += chunk;\n  shown += 1;\n}\nif (shown < blocks.length) content += NL + '… i jeszcze ' + (blocks.length - shown) + ' produktów (pełna lista w panelu WooCommerce).';\nreturn [{ json: { content, length: content.length, firstRun: c.firstRun, transitions: c.transitions.length, soldOut: c.soldOut.map(p => p.name), adsFlagged: adsByProduct, metaNote } }];"
+      }
+    },
+    {
+      "id": "f6abb327-2e3c-4b02-bf54-f2e273f7807c",
+      "name": "Wiersze do zapisu",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3120,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Zapis stanu dopiero PO wysłaniu alertu: jeśli Discord zawiedzie, zmiana zostanie zgłoszona w następnym przebiegu.\nreturn $('Porównaj stany').first().json.upserts.map(r => ({ json: r }));"
+      }
+    },
+    {
+      "id": "bd1caa68-3f63-4911-9520-0e48ef6c24bb",
+      "name": "Wyślij alert",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        100
+      ],
+      "parameters": {
+        "authentication": "webhook",
+        "operation": "sendLegacy",
+        "content": "={{ $json.content }}",
+        "options": {}
+      },
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "REDACTED",
+          "name": "Discord · lunae (webhook)"
+        }
+      }
+    },
+    {
+      "id": "990004bc-d39d-4e39-a747-3a6d1abe3062",
+      "name": "Zapisz stan",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3360,
+        300
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "NJXfqGKZYnvqjTXH",
+          "cachedResultName": "lunae_stock_state"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "variation_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.variation_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "variation_id": "={{ $json.variation_id }}",
+            "product_id": "={{ $json.product_id }}",
+            "product": "={{ $json.product }}",
+            "variant": "={{ $json.variant }}",
+            "level": "={{ $json.level }}",
+            "qty": "={{ $json.qty }}",
+            "updated_at": "={{ $json.updated_at }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "variation_id",
+              "displayName": "variation_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "product_id",
+              "displayName": "product_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "product",
+              "displayName": "product",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "variant",
+              "displayName": "variant",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "level",
+              "displayName": "level",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "qty",
+              "displayName": "qty",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "readOnly": false,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "e7c6468e-2cd9-4b08-85ce-ec7837bea4a3",
+      "name": "Poniedziałek 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        420
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "weeksInterval": 1,
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 8,
+              "triggerAtMinute": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a4244553-d7cc-4479-a9ef-adf559002807",
+      "name": "Sticky Note 66ab06e1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -260
+      ],
+      "parameters": {
+        "content": "## lunae · Stany magazynowe\n**Co 30 min:** pobiera opublikowane produkty + warianty z WooCommerce (tylko odczyt), wylicza poziom OK / LOW / OUT i porównuje z tabelą `lunae_stock_state`. Discord tylko przy zmianie poziomu (OK→LOW, →OUT, OUT/LOW→OK, OUT→LOW), wszystkie zmiany z jednego przebiegu w jednej wiadomości. Pusta tabela = pierwszy przebieg: zapis + jedno podsumowanie „stan początkowy”.\n\n**Poniedziałek 08:00:** przegląd tygodniowy (embed): warianty LOW/OUT, suma sztuk i wartość brutto.\n\n**Próg niskiego stanu:** węzeł „Ustawienia” → `low_max` (domyślnie 2 → LOW = 1–2 szt.).\n\n**Meta (tylko odczyt):** gdy cały produkt wyprzedany, sprawdza AKTYWNE reklamy, których nazwa/kreacja zawiera nazwę lub adres produktu. Reklamy z istniejących postów nie zwracają linku, więc dopasowanie jest po nazwie/tytule — nigdy niczego nie wyłącza. Błąd Meta = tylko dopisek w wiadomości.",
+        "color": 4,
+        "width": 760,
+        "height": 420
+      }
+    }
+  ],
+  "connections": {
+    "Co 30 min": {
+      "main": [
+        [
+          {
+            "node": "Ustawienia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ustawienia": {
+      "main": [
+        [
+          {
+            "node": "Pobierz produkty",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pobierz produkty": {
+      "main": [
+        [
+          {
+            "node": "Pobierz warianty",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pobierz warianty": {
+      "main": [
+        [
+          {
+            "node": "Normalizuj stany",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizuj stany": {
+      "main": [
+        [
+          {
+            "node": "Przegląd tygodniowy?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Przegląd tygodniowy?": {
+      "main": [
+        [
+          {
+            "node": "Zbuduj przegląd tygodniowy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Odczytaj poprzedni stan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zbuduj przegląd tygodniowy": {
+      "main": [
+        [
+          {
+            "node": "Wyślij przegląd",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Odczytaj poprzedni stan": {
+      "main": [
+        [
+          {
+            "node": "Porównaj stany",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Porównaj stany": {
+      "main": [
+        [
+          {
+            "node": "Jest co wysłać?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Jest co wysłać?": {
+      "main": [
+        [
+          {
+            "node": "Cały produkt wyprzedany?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wiersze do zapisu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cały produkt wyprzedany?": {
+      "main": [
+        [
+          {
+            "node": "Meta: aktywne reklamy",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Złóż wiadomość",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta: aktywne reklamy": {
+      "main": [
+        [
+          {
+            "node": "Złóż wiadomość",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Złóż wiadomość": {
+      "main": [
+        [
+          {
+            "node": "Wyślij alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wiersze do zapisu": {
+      "main": [
+        [
+          {
+            "node": "Zapisz stan",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wyślij alert": {
+      "main": [
+        [
+          {
+            "node": "Wiersze do zapisu",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poniedziałek 08:00": {
+      "main": [
+        [
+          {
+            "node": "Ustawienia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Warsaw"
+  }
+}

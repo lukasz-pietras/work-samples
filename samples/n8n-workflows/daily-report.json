@@ -1,0 +1,406 @@
+{
+  "name": "lunae · Raport dzienny",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "id": "d7e23225-7bfd-4bc8-82ae-a087d4c84968",
+      "name": "Codziennie 08:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// lunae · Raport dzienny — date ranges (Europe/Warsaw calendar days, converted to UTC for WooCommerce).\n// Optional manual override: input item may carry report_date = 'yyyy-MM-dd' (the day to report on).\nconst tz = 'Europe/Warsaw';\nconst input = $input.first() ? $input.first().json : {};\nconst override = input && typeof input.report_date === 'string' && /^\\d{4}-\\d\\d-\\d\\d$/.test(input.report_date) ? input.report_date : null;\nconst today = override\n  ? DateTime.fromISO(override, { zone: tz }).plus({ days: 1 }).startOf('day')\n  : DateTime.now().setZone(tz).startOf('day');\nconst y = today.minus({ days: 1 });\nconst monthStart = y.startOf('month');\nconst wStart = y.minus({ days: 7 });\nconst fetchFrom = monthStart < wStart ? monthStart : wStart;\nconst u = function (d) { return d.toUTC().toFormat(\"yyyy-MM-dd'T'HH:mm:ss\"); };\n\nreturn [{\n  json: {\n    tz: tz,\n    y_date: y.toISODate(),\n    y_label: y.setLocale('pl').toFormat('cccc, d MMMM yyyy'),\n    y_short: y.toFormat('d.MM'),\n    w_date: wStart.toISODate(),\n    w_label: wStart.setLocale('pl').toFormat('ccc d.MM'),\n    month_start_date: monthStart.toISODate(),\n    month_label: y.setLocale('pl').toFormat('LLLL'),\n    fetch_from_date: fetchFrom.toISODate(),\n    y_start_utc: u(y),\n    y_end_utc: u(today),\n    w_start_utc: u(wStart),\n    w_end_utc: u(wStart.plus({ days: 1 })),\n    month_start_utc: u(monthStart),\n    fetch_from_utc: u(fetchFrom),\n  },\n}];\n"
+      },
+      "id": "f5ea745f-e77e-4317-b3fe-fc6c2586da3d",
+      "name": "Zakresy dat",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://lunae.pl/wp-json/wc/v3/orders",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wooCommerceApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "after",
+              "value": "={{ $json.fetch_from_utc }}"
+            },
+            {
+              "name": "before",
+              "value": "={{ $json.y_end_utc }}"
+            },
+            {
+              "name": "dates_are_gmt",
+              "value": "true"
+            },
+            {
+              "name": "status",
+              "value": "any"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "orderby",
+              "value": "date"
+            },
+            {
+              "name": "order",
+              "value": "asc"
+            },
+            {
+              "name": "_fields",
+              "value": "id,number,status,total,date_created_gmt,date_paid_gmt,line_items"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "page",
+                    "value": "={{ $pageCount + 1 }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !Array.isArray($response.body) || $response.body.length < 100 }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "82066995-e5f7-46ae-bd35-4600db40106b",
+      "name": "Pobierz zamówienia (Woo)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        448,
+        0
+      ],
+      "credentials": {
+        "wooCommerceApi": {
+          "id": "REDACTED",
+          "name": "WooCommerce · lunae.pl (read-only)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "https://lunae.pl/wp-json/wc/v3/refunds",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wooCommerceApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "after",
+              "value": "={{ $('Zakresy dat').first().json.month_start_utc }}"
+            },
+            {
+              "name": "before",
+              "value": "={{ $('Zakresy dat').first().json.y_end_utc }}"
+            },
+            {
+              "name": "dates_are_gmt",
+              "value": "true"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "_fields",
+              "value": "id,parent_id,date_created_gmt,amount"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "05f83833-ef76-48ed-9102-89cc8e1ccfba",
+      "name": "Pobierz zwroty (Woo)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        672,
+        0
+      ],
+      "credentials": {
+        "wooCommerceApi": {
+          "id": "REDACTED",
+          "name": "WooCommerce · lunae.pl (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/v27.0/act_<AD_ACCOUNT_ID>/insights",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "level",
+              "value": "account"
+            },
+            {
+              "name": "time_increment",
+              "value": "1"
+            },
+            {
+              "name": "time_range",
+              "value": "={{ JSON.stringify({ since: $('Zakresy dat').first().json.fetch_from_date, until: $('Zakresy dat').first().json.y_date }) }}"
+            },
+            {
+              "name": "fields",
+              "value": "spend,impressions,inline_link_clicks,actions,action_values"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "610847b4-ff6f-4c1c-abae-1607da81b533",
+      "name": "Meta · konto dziennie",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        880,
+        0
+      ],
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "REDACTED",
+          "name": "Meta Graph · lunae ads (ads_read)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://graph.facebook.com/v27.0/<CAMPAIGN_ID>",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "name,effective_status,spend_cap,daily_budget,insights.date_preset(maximum){spend}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "0e9ed76d-c7fb-4c5d-bfe7-c3f4c039aaef",
+      "name": "Meta · kampania Evergreen",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "position": [
+        1104,
+        0
+      ],
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "REDACTED",
+          "name": "Meta Graph · lunae ads (ads_read)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// lunae · Raport dzienny — build one Discord embed from Woo orders/refunds + Meta insights.\n// Meta / refunds failures are tolerated (report still posts with \"brak danych\").\nconst CAMPAIGN_CAP_FALLBACK = 1500; // zł, used only when Meta does not return spend_cap\nconst PAID = ['processing', 'completed', 'refunded'];\nconst ctx = $('Zakresy dat').first().json;\n\nfunction safeAll(name) { try { return $(name).all(); } catch (e) { return []; } }\nfunction ms(s) { return Date.parse(s + 'Z'); }\nfunction gmt(s) {\n  if (!s) return null;\n  const str = String(s);\n  const v = Date.parse(/Z$|[+-]\\d\\d:\\d\\d$/.test(str) ? str : str + 'Z');\n  return isNaN(v) ? null : v;\n}\nfunction grp(intStr) { return intStr.replace(/\\B(?=(\\d{3})+(?!\\d))/g, ' '); }\nfunction money(v) {\n  const n = Number(v) || 0;\n  const p = Math.abs(n).toFixed(2).split('.');\n  return (n < 0 ? '-' : '') + grp(p[0]) + ',' + p[1] + ' zł';\n}\nfunction int(v) { return grp(String(Math.round(Number(v) || 0))); }\nfunction dec(v, d) { return (Number(v) || 0).toFixed(d).replace('.', ','); }\nfunction errText(e) {\n  if (!e) return 'nieznany błąd';\n  if (typeof e === 'string') return e.slice(0, 120);\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 120);\n}\nfunction itemName(li) {\n  let name = String(li.name || 'Produkt').trim();\n  const extras = [];\n  for (const m of (li.meta_data || [])) {\n    if (!m || typeof m.key !== 'string' || m.key.charAt(0) === '_') continue;\n    const raw = m.display_value != null ? m.display_value : m.value;\n    if (typeof raw !== 'string' && typeof raw !== 'number') continue;\n    const clean = String(raw).replace(/<[^>]*>/g, '').trim();\n    if (clean && clean.length <= 40 && name.indexOf(clean) === -1) extras.push(clean);\n  }\n  return extras.length ? name + ' – ' + extras.join(', ') : name;\n}\nfunction delta(cur, prev, fmt) {\n  if (prev === null || prev === undefined) return '';\n  const d = cur - prev;\n  const arrow = d > 0 ? '↑' : (d < 0 ? '↓' : '→');\n  return arrow + ' tydz. temu: ' + fmt(prev);\n}\n\n// ---------- WooCommerce orders ----------\nconst seen = {};\nconst orders = [];\nfor (const it of safeAll('Pobierz zamówienia (Woo)')) {\n  const o = it.json || {};\n  if (!o.id || !o.status || seen[o.id]) continue;\n  seen[o.id] = true;\n  orders.push(o);\n}\nfunction stats(from, to) {\n  const inR = orders.filter(function (o) { const c = gmt(o.date_created_gmt); return c !== null && c >= from && c < to; });\n  const paid = inR.filter(function (o) { return PAID.indexOf(o.status) !== -1; });\n  const count = function (st) { return inR.filter(function (o) { return o.status === st; }).length; };\n  const revenue = paid.reduce(function (s, o) { return s + (Number(o.total) || 0); }, 0);\n  const units = paid.reduce(function (s, o) {\n    return s + (o.line_items || []).reduce(function (a, li) { return a + (Number(li.quantity) || 0); }, 0);\n  }, 0);\n  return { paid: paid, orders: paid.length, revenue: revenue, units: units,\n    failed: count('failed'), pending: count('pending'), onhold: count('on-hold'), cancelled: count('cancelled') };\n}\nconst Y0 = ms(ctx.y_start_utc), Y1 = ms(ctx.y_end_utc);\nconst W0 = ms(ctx.w_start_utc), W1 = ms(ctx.w_end_utc);\nconst M0 = ms(ctx.month_start_utc);\nconst sy = stats(Y0, Y1);\nconst sw = stats(W0, W1);\nconst sm = stats(M0, Y1);\n\nconst prod = {};\nfor (const o of sy.paid) {\n  for (const li of (o.line_items || [])) {\n    const k = itemName(li);\n    if (!prod[k]) prod[k] = { qty: 0, value: 0 };\n    prod[k].qty += Number(li.quantity) || 0;\n    prod[k].value += (Number(li.total) || 0) + (Number(li.total_tax) || 0);\n  }\n}\nconst top = Object.keys(prod).map(function (k) { return { name: k, qty: prod[k].qty, value: prod[k].value }; })\n  .sort(function (a, b) { return b.qty - a.qty || b.value - a.value; }).slice(0, 5);\nlet topText = top.map(function (p, i) { return (i + 1) + '. ' + p.name + ' × ' + p.qty + ' (' + money(p.value) + ')'; }).join('\\n');\nif (!topText) topText = '—';\nif (topText.length > 1000) topText = topText.slice(0, 999) + '…';\n\n// ---------- Refunds ----------\nconst refItems = safeAll('Pobierz zwroty (Woo)');\nlet refundsText;\nif (refItems.length && refItems[0].json && refItems[0].json.error) {\n  refundsText = 'brak danych';\n} else {\n  const refs = refItems.map(function (i) { return i.json || {}; }).filter(function (r) { return r.id; });\n  const inRange = function (from, to) {\n    return refs.filter(function (r) { const c = gmt(r.date_created_gmt); return c !== null && c >= from && c < to; });\n  };\n  const sum = function (arr) { return arr.reduce(function (s, r) { return s + Math.abs(Number(r.amount) || 0); }, 0); };\n  const ry = inRange(Y0, Y1), rm = inRange(M0, Y1);\n  refundsText = (ry.length ? ry.length + ' · ' + money(sum(ry)) : '0') + '\\nMTD: ' + (rm.length ? rm.length + ' · ' + money(sum(rm)) : '0');\n}\n\n// ---------- Meta: account daily insights ----------\nconst PURCHASE_TYPES = ['omni_purchase', 'purchase', 'offsite_conversion.fb_pixel_purchase'];\nfunction pick(list) {\n  if (!Array.isArray(list)) return 0;\n  for (const t of PURCHASE_TYPES) {\n    const a = list.find(function (x) { return x && x.action_type === t; });\n    if (a) return Number(a.value) || 0;\n  }\n  return 0;\n}\nlet metaErr = null;\nlet rows = [];\nconst mItem = safeAll('Meta · konto dziennie')[0];\nif (!mItem || !mItem.json) metaErr = 'brak odpowiedzi';\nelse if (mItem.json.error) metaErr = errText(mItem.json.error);\nelse if (!Array.isArray(mItem.json.data)) metaErr = 'nieoczekiwana odpowiedź API';\nelse rows = mItem.json.data;\n\nfunction metaAgg(fromDate, toDate) {\n  const r = rows.filter(function (x) { return x.date_start >= fromDate && x.date_start <= toDate; });\n  return r.reduce(function (a, x) {\n    a.spend += Number(x.spend) || 0;\n    a.impressions += Number(x.impressions) || 0;\n    a.clicks += Number(x.inline_link_clicks) || 0;\n    a.purchases += pick(x.actions);\n    a.purchaseValue += pick(x.action_values);\n    return a;\n  }, { spend: 0, impressions: 0, clicks: 0, purchases: 0, purchaseValue: 0 });\n}\nconst my = metaErr ? null : metaAgg(ctx.y_date, ctx.y_date);\nconst mw = metaErr ? null : metaAgg(ctx.w_date, ctx.w_date);\nconst mm = metaErr ? null : metaAgg(ctx.month_start_date, ctx.y_date);\n\n// ---------- Meta: campaign cap ----------\nlet campaignText = null;\nconst cItem = safeAll('Meta · kampania Evergreen')[0];\nif (cItem && cItem.json && !cItem.json.error && (cItem.json.id || cItem.json.name)) {\n  const c = cItem.json;\n  const lifetime = c.insights && Array.isArray(c.insights.data) && c.insights.data[0] ? Number(c.insights.data[0].spend) || 0 : 0;\n  const rawCap = Number(c.spend_cap);\n  let cap = CAMPAIGN_CAP_FALLBACK;\n  let capNote = ' (limit z konfiguracji)';\n  if (rawCap > 0 && rawCap < 922337203685478) { cap = rawCap / 100; capNote = ''; }\n  const pct = cap > 0 ? Math.round(lifetime / cap * 100) : 0;\n  const daily = Number(c.daily_budget) > 0 ? ' · ' + money(Number(c.daily_budget) / 100) + '/dzień' : '';\n  campaignText = money(lifetime) + ' / ' + money(cap) + ' (' + pct + '%)' + capNote + ' · ' + (c.effective_status || '?') + daily;\n} else if (cItem && cItem.json && cItem.json.error) {\n  campaignText = 'brak danych (' + errText(cItem.json.error) + ')';\n}\n\n// ---------- Computed ----------\nfunction roas(rev, spend) { return spend > 0 ? dec(rev / spend, 2) + '×' : '—'; }\nfunction cpo(spend, n) {\n  if (!(spend > 0)) return '—';\n  return n > 0 ? money(spend / n) : 'brak zamówień';\n}\n\n// ---------- Embed ----------\nconst fields = [];\nfields.push({ name: 'Zamówienia opłacone', value: String(sy.orders) + '\\n' + delta(sy.orders, sw.orders, String), inline: true });\nfields.push({ name: 'Przychód brutto', value: money(sy.revenue) + '\\n' + delta(sy.revenue, sw.revenue, money), inline: true });\nfields.push({ name: 'Śr. koszyk', value: sy.orders ? money(sy.revenue / sy.orders) : '—', inline: true });\nfields.push({ name: 'Sprzedane sztuki', value: int(sy.units), inline: true });\nfields.push({ name: 'Nieopłacone / nieudane', value: 'oczekujące ' + sy.pending + ' · on-hold ' + sy.onhold + '\\nnieudane ' + sy.failed + ' · anulowane ' + sy.cancelled, inline: true });\nfields.push({ name: 'Zwroty', value: refundsText, inline: true });\nfields.push({ name: 'Top produkty (wczoraj)', value: topText, inline: false });\n\nif (metaErr) {\n  fields.push({ name: 'Meta Ads', value: 'Meta: brak danych (' + metaErr + ')', inline: false });\n} else {\n  const ctr = my.impressions > 0 ? dec(my.clicks / my.impressions * 100, 2) + '%' : '—';\n  fields.push({ name: 'Meta Ads · wczoraj', value:\n    'Wydatki ' + money(my.spend) + ' · wyśw. ' + int(my.impressions) + ' · kliknięcia w link ' + int(my.clicks) + ' (CTR ' + ctr + ')\\n' +\n    'Zakupy wg Meta: ' + int(my.purchases) + ' · ' + money(my.purchaseValue) +\n    (mw ? '\\nTydz. temu: wydatki ' + money(mw.spend) : ''), inline: false });\n  fields.push({ name: 'ROAS (Woo ÷ Meta)', value: 'wczoraj ' + roas(sy.revenue, my.spend) + '\\nMTD ' + roas(sm.revenue, mm.spend), inline: true });\n  fields.push({ name: 'Koszt / zamówienie', value: 'wczoraj ' + cpo(my.spend, sy.orders) + '\\nMTD ' + cpo(mm.spend, sm.orders), inline: true });\n}\nfields.push({ name: 'Miesiąc do wczoraj (' + ctx.month_label + ')', value:\n  sm.orders + ' zam. · ' + money(sm.revenue) + (sm.orders ? ' · śr. ' + money(sm.revenue / sm.orders) : '') +\n  (mm ? '\\nMeta: ' + money(mm.spend) + ' · zakupy wg Meta ' + int(mm.purchases) + ' (' + money(mm.purchaseValue) + ')' : '\\nMeta: brak danych'), inline: false });\nif (campaignText) fields.push({ name: 'Kampania Evergreen (wydane / limit)', value: campaignText, inline: false });\n\nfor (const f of fields) {\n  f.value = String(f.value || '—').trim() || '—';\n  if (f.value.length > 1024) f.value = f.value.slice(0, 1023) + '…';\n}\n\nconst embed = {\n  title: 'Raport dzienny · ' + ctx.y_label,\n  color: metaErr ? 0xE67E22 : (sy.orders > 0 ? 0x2ECC71 : 0x95A5A6),\n  fields: fields,\n  footer: { text: 'Woo: zamówienia wg daty utworzenia (Europe/Warsaw), brutto · opłacone = processing/completed/refunded · porównanie: ' + ctx.w_label },\n  timestamp: new Date().toISOString(),\n};\nconst content = '📊 Raport ' + ctx.y_short + ': ' + sy.orders + ' zam. · ' + money(sy.revenue) +\n  (my ? ' · Meta ' + money(my.spend) + ' · ROAS ' + roas(sy.revenue, my.spend) : ' · Meta: brak danych');\n\nreturn [{ json: { content: content, embed_json: JSON.stringify(embed), meta_ok: !metaErr, orders_yesterday: sy.orders, revenue_yesterday: Math.round(sy.revenue * 100) / 100 } }];\n"
+      },
+      "id": "f2fbc506-c5df-449a-a8c0-d3c0166ef775",
+      "name": "Zbuduj raport",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1328,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.content }}",
+        "options": {
+          "wait": true
+        },
+        "embeds": {
+          "values": [
+            {
+              "inputMethod": "json",
+              "json": "={{ $json.embed_json }}"
+            }
+          ]
+        }
+      },
+      "id": "b8fa7fe2-3b1b-4ce6-91b9-f73b228f3360",
+      "name": "Wyślij raport na Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        1552,
+        0
+      ],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "REDACTED",
+          "name": "Discord · lunae (webhook)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Raport dzienny (08:00 Europe/Warsaw)\nWczoraj (dzień kalendarzowy PL): zamówienia opłacone, przychód brutto, śr. koszyk, sztuki, top produkty, zwroty, nieopłacone/nieudane; MTD; porównanie z tym samym dniem tydzień temu.\nMeta (Graph API, tylko odczyt): wydatki, wyświetlenia, kliknięcia, CTR, zakupy wg Meta; kampania Evergreen vs limit.\nROAS = przychód Woo ÷ wydatki Meta. Błąd Meta/zwrotów nie blokuje raportu (\"Meta: brak danych\").\nRęczny rerun: przypnij do triggera `{\"report_date\":\"2026-11-09\"}`.",
+        "height": 224,
+        "width": 1488,
+        "color": 7
+      },
+      "id": "eb04b331-b33c-4bc7-9366-10dad0c06f03",
+      "name": "Sticky Note e1e95ce8",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        192,
+        16
+      ]
+    }
+  ],
+  "connections": {
+    "Codziennie 08:00": {
+      "main": [
+        [
+          {
+            "node": "Zakresy dat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zakresy dat": {
+      "main": [
+        [
+          {
+            "node": "Pobierz zamówienia (Woo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pobierz zamówienia (Woo)": {
+      "main": [
+        [
+          {
+            "node": "Pobierz zwroty (Woo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pobierz zwroty (Woo)": {
+      "main": [
+        [
+          {
+            "node": "Meta · konto dziennie",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta · konto dziennie": {
+      "main": [
+        [
+          {
+            "node": "Meta · kampania Evergreen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta · kampania Evergreen": {
+      "main": [
+        [
+          {
+            "node": "Zbuduj raport",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Zbuduj raport": {
+      "main": [
+        [
+          {
+            "node": "Wyślij raport na Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Warsaw",
+    "binaryMode": "separate"
+  }
+}

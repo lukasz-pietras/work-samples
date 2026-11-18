@@ -1,0 +1,792 @@
+{
+  "name": "lunae · Raport tygodniowy (SEO + reklamy)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "weeks",
+              "triggerAtDay": [
+                1
+              ],
+              "triggerAtHour": 8,
+              "triggerAtMinute": 30
+            }
+          ]
+        }
+      },
+      "id": "46876cdc-1d5a-48c6-a771-b7c49220c7fa",
+      "name": "Poniedziałek 08:30",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Okresy raportu + stałe. Wszystkie daty w Europe/Warsaw.\nconst tz = 'Europe/Warsaw';\nconst now = DateTime.now().setZone(tz);\nconst today = now.startOf('day');\nconst monday = today.minus({ days: today.weekday - 1 }); // poniedziałek bieżącego tygodnia\nconst d = (x) => x.toISODate();\n\n// Pełny tydzień pon–nd (GA4, WooCommerce, Meta)\nconst wCurS = monday.minus({ days: 7 });\nconst wCurE = monday.minus({ days: 1 });\nconst wPrevS = monday.minus({ days: 14 });\nconst wPrevE = monday.minus({ days: 8 });\n\n// Search Console: 7 dni kończące się 3 dni temu (opóźnienie danych) vs poprzednie 7 dni\nconst gEnd = today.minus({ days: 3 });\nconst gStart = gEnd.minus({ days: 6 });\nconst gPrevEnd = gEnd.minus({ days: 7 });\nconst gPrevStart = gEnd.minus({ days: 13 });\n\nconst site = 'https://lunae.pl';\nconst inspect = [\n  { url: site + '/', kind: 'new' },\n  { url: site + '/sklep/', kind: 'new' },\n  { url: site + '/kategoria-produktu/bielizna/biustonosze/', kind: 'new' },\n  { url: site + '/produkt/biustonosz-iris-incarnata/', kind: 'product' },\n  { url: site + '/pl/p/Biustonosz-Iris-incarnata/7', kind: 'old' },\n  { url: site + '/pl/c/Bielizna/1', kind: 'old' },\n];\n\nreturn [{\n  json: {\n    tz,\n    generatedAt: now.toISO(),\n    site,\n    gscSite: 'sc-domain:lunae.pl',\n    gscSiteEnc: encodeURIComponent('sc-domain:lunae.pl'),\n    ga4Property: '<GA4_PROPERTY_ID>',\n    metaAccount: 'act_<AD_ACCOUNT_ID>',\n    metaCampaign: '<CAMPAIGN_ID>',\n    graphVersion: 'v27.0',\n    metaSpendCapZl: 1500,\n    wooBase: site + '/wp-json/wc/v3',\n    gsc: {\n      cur: { start: d(gStart), end: d(gEnd) },\n      prev: { start: d(gPrevStart), end: d(gPrevEnd) },\n    },\n    week: {\n      cur: { start: d(wCurS), end: d(wCurE) },\n      prev: { start: d(wPrevS), end: d(wPrevE) },\n    },\n    // WooCommerce: after/before w strefie sklepu (Europe/Warsaw), oba tygodnie w jednym zapytaniu\n    wooAfter: d(wPrevS) + 'T00:00:00',\n    wooBefore: d(monday) + 'T00:00:00',\n    metaTimeRanges: JSON.stringify([\n      { since: d(wCurS), until: d(wCurE) },\n      { since: d(wPrevS), until: d(wPrevE) },\n    ]),\n    metaTimeRangeCur: JSON.stringify({ since: d(wCurS), until: d(wCurE) }),\n    inspect,\n  },\n}];\n"
+      },
+      "id": "6c8a1633-c994-495b-a0b7-ea9ef2724f27",
+      "name": "Okresy i konfiguracja",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "executeOnce": true,
+      "position": [
+        224,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/webmasters/v3/sites/sc-domain%3Alunae.pl/searchAnalytics/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ startDate: $('Okresy i konfiguracja').first().json.gsc.prev.start, endDate: $('Okresy i konfiguracja').first().json.gsc.cur.end, dimensions: ['date'], rowLimit: 100, type: 'web' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "879a3040-c184-4c15-adaa-bf790a7cde04",
+      "name": "GSC · dzienne sumy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        496,
+        224
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REDACTED",
+          "name": "Google SA · GA4 + Search Console (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/webmasters/v3/sites/sc-domain%3Alunae.pl/searchAnalytics/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ startDate: $('Okresy i konfiguracja').first().json.gsc.cur.start, endDate: $('Okresy i konfiguracja').first().json.gsc.cur.end, dimensions: ['query'], rowLimit: 500, type: 'web' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "992fe4c4-b4be-40fd-9272-122b34291410",
+      "name": "GSC · frazy (bieżący)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        720,
+        224
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REDACTED",
+          "name": "Google SA · GA4 + Search Console (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/webmasters/v3/sites/sc-domain%3Alunae.pl/searchAnalytics/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ startDate: $('Okresy i konfiguracja').first().json.gsc.prev.start, endDate: $('Okresy i konfiguracja').first().json.gsc.prev.end, dimensions: ['query'], rowLimit: 500, type: 'web' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "bac2d4ed-5d50-4214-9cac-73fb65d26823",
+      "name": "GSC · frazy (poprzedni)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        944,
+        224
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REDACTED",
+          "name": "Google SA · GA4 + Search Console (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/webmasters/v3/sites/sc-domain%3Alunae.pl/searchAnalytics/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ startDate: $('Okresy i konfiguracja').first().json.gsc.cur.start, endDate: $('Okresy i konfiguracja').first().json.gsc.cur.end, dimensions: ['page'], rowLimit: 500, type: 'web' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "75bc04b7-6925-468b-b33e-837fb72aa21e",
+      "name": "GSC · strony (bieżący)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        1168,
+        224
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REDACTED",
+          "name": "Google SA · GA4 + Search Console (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/webmasters/v3/sites/sc-domain%3Alunae.pl/searchAnalytics/query",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ startDate: $('Okresy i konfiguracja').first().json.gsc.prev.start, endDate: $('Okresy i konfiguracja').first().json.gsc.prev.end, dimensions: ['page'], rowLimit: 500, type: 'web' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "c7533907-f9a0-413f-885c-30c653f8bb71",
+      "name": "GSC · strony (poprzedni)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        1392,
+        224
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REDACTED",
+          "name": "Google SA · GA4 + Search Console (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://www.googleapis.com/webmasters/v3/sites/sc-domain%3Alunae.pl/sitemaps",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "c2e96f5f-ec74-4878-bfd8-b818ce4aa2cd",
+      "name": "GSC · sitemapy",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        1616,
+        224
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REDACTED",
+          "name": "Google SA · GA4 + Search Console (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const c = $('Okresy i konfiguracja').first().json;\nreturn c.inspect.map((u) => ({ json: { inspectionUrl: u.url, siteUrl: c.gscSite, languageCode: 'pl' } }));"
+      },
+      "id": "87b1766b-153f-4434-ae78-5a8eb2251b23",
+      "name": "URL-e do inspekcji",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "executeOnce": true,
+      "position": [
+        1840,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://searchconsole.googleapis.com/v1/urlInspection/index:inspect",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ inspectionUrl: $json.inspectionUrl, siteUrl: $json.siteUrl, languageCode: $json.languageCode }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 300
+            }
+          },
+          "timeout": 30000
+        }
+      },
+      "id": "346d0798-e85a-4c2d-b25c-0aed953096e7",
+      "name": "GSC · inspekcja URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2064,
+        224
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REDACTED",
+          "name": "Google SA · GA4 + Search Console (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://analyticsdata.googleapis.com/v1beta/properties/<GA4_PROPERTY_ID>:batchRunReports",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ requests: [ { dateRanges: [ { startDate: $('Okresy i konfiguracja').first().json.week.cur.start, endDate: $('Okresy i konfiguracja').first().json.week.cur.end, name: 'cur' }, { startDate: $('Okresy i konfiguracja').first().json.week.prev.start, endDate: $('Okresy i konfiguracja').first().json.week.prev.end, name: 'prev' } ],   metrics: [ { name: 'sessions' }, { name: 'totalUsers' }, { name: 'ecommercePurchases' }, { name: 'purchaseRevenue' } ] }, { dateRanges: [ { startDate: $('Okresy i konfiguracja').first().json.week.cur.start, endDate: $('Okresy i konfiguracja').first().json.week.cur.end, name: 'cur' }, { startDate: $('Okresy i konfiguracja').first().json.week.prev.start, endDate: $('Okresy i konfiguracja').first().json.week.prev.end, name: 'prev' } ],   dimensions: [ { name: 'sessionDefaultChannelGroup' } ], metrics: [ { name: 'sessions' }, { name: 'ecommercePurchases' }, { name: 'purchaseRevenue' } ], limit: 50 }, { dateRanges: [ { startDate: $('Okresy i konfiguracja').first().json.week.cur.start, endDate: $('Okresy i konfiguracja').first().json.week.cur.end } ],   dimensions: [ { name: 'landingPage' } ], metrics: [ { name: 'sessions' }, { name: 'ecommercePurchases' } ], orderBys: [ { metric: { metricName: 'sessions' }, desc: true } ], limit: 5 } ] }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "fdce564c-fe14-4d65-adc2-f821416dff1f",
+      "name": "GA4 · raporty",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        1024,
+        224
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "REDACTED",
+          "name": "Google SA · GA4 + Search Console (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "={{ $('Okresy i konfiguracja').first().json.wooBase }}/orders",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wooCommerceApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "processing,completed"
+            },
+            {
+              "name": "after",
+              "value": "={{ $('Okresy i konfiguracja').first().json.wooAfter }}"
+            },
+            {
+              "name": "before",
+              "value": "={{ $('Okresy i konfiguracja').first().json.wooBefore }}"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "orderby",
+              "value": "date"
+            },
+            {
+              "name": "order",
+              "value": "desc"
+            },
+            {
+              "name": "_fields",
+              "value": "id,number,status,date_created,date_paid,total,currency,refunds"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "f3d160bf-8a88-400e-8185-3d3c960a35b6",
+      "name": "Woo · zamówienia",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        1248,
+        224
+      ],
+      "credentials": {
+        "wooCommerceApi": {
+          "id": "REDACTED",
+          "name": "WooCommerce · lunae.pl (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/{{ $('Okresy i konfiguracja').first().json.graphVersion }}/<CAMPAIGN_ID>/insights",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "level",
+              "value": "campaign"
+            },
+            {
+              "name": "fields",
+              "value": "spend,impressions,reach,inline_link_clicks,actions,action_values"
+            },
+            {
+              "name": "time_ranges",
+              "value": "={{ $('Okresy i konfiguracja').first().json.metaTimeRanges }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "0d5620f4-f52d-44d1-8800-157129e84443",
+      "name": "Meta · kampania (2 tyg.)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        1552,
+        224
+      ],
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "REDACTED",
+          "name": "Meta Graph · lunae ads (ads_read)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/{{ $('Okresy i konfiguracja').first().json.graphVersion }}/<CAMPAIGN_ID>",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "name,effective_status,spend_cap,insights.date_preset(maximum){spend}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "94a9c048-592e-44e0-be19-8d98c7893521",
+      "name": "Meta · status kampanii",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        1776,
+        224
+      ],
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "REDACTED",
+          "name": "Meta Graph · lunae ads (ads_read)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/{{ $('Okresy i konfiguracja').first().json.graphVersion }}/<CAMPAIGN_ID>/insights",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "level",
+              "value": "ad"
+            },
+            {
+              "name": "fields",
+              "value": "ad_id,ad_name,spend,impressions,inline_link_clicks,actions,action_values"
+            },
+            {
+              "name": "time_range",
+              "value": "={{ $('Okresy i konfiguracja').first().json.metaTimeRangeCur }}"
+            },
+            {
+              "name": "limit",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "8a2d2b1d-217e-45e7-9769-4c2fdcf4d038",
+      "name": "Meta · reklamy (tydzień)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000,
+      "position": [
+        2000,
+        224
+      ],
+      "credentials": {
+        "facebookGraphApi": {
+          "id": "REDACTED",
+          "name": "Meta Graph · lunae ads (ads_read)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Składa raport tygodniowy (3 embedy Discord). Każde źródło jest opcjonalne:\n// błąd lub brak danych => \"brak danych: <źródło>\", raport i tak wychodzi.\nconst C = $('Okresy i konfiguracja').first().json;\nconst NB = ' ';\nconst MONTHS = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru'];\nconst missing = [];\n\n// ---------- helpers ----------\nfunction safeAll(name) {\n  try { return $(name).all().map((i) => i.json || {}); } catch (e) { return null; }\n}\nfunction errMsg(er) {\n  if (er == null) return 'nieznany błąd';\n  if (typeof er === 'string') return er;\n  let m = er.message || er.description || er.error || '';\n  if (typeof m === 'object') m = m.message || JSON.stringify(m);\n  const code = er.httpCode || er.status || er.code || '';\n  if (code && !String(m).includes(String(code))) m = code + ' ' + m;\n  return m || JSON.stringify(er).slice(0, 110);\n}\nfunction short(s, n) { s = String(s == null ? '' : s).replace(/\\s+/g, ' ').trim(); return s.length > n ? s.slice(0, n - 1) + '…' : s; }\n// Zwraca { data, err }: data = lista itemów bez błędów; err = tekst gdy całe źródło padło.\nfunction source(name) {\n  const items = safeAll(name);\n  if (items === null) return { data: [], err: 'węzeł się nie wykonał' };\n  const ok = items.filter((j) => !j.error);\n  const bad = items.find((j) => j.error);\n  if (!ok.length && bad) return { data: [], err: short(errMsg(bad.error), 110) };\n  return { data: ok, err: null };\n}\nfunction num(x) { const n = Number(x); return Number.isFinite(n) ? n : 0; }\nfunction group(s) { return s.replace(/\\B(?=(\\d{3})+(?!\\d))/g, NB); }\nfunction fInt(n) { const r = Math.round(num(n)); return (r < 0 ? '−' : '') + group(String(Math.abs(r))); }\nfunction fDec(n, dg) { if (dg === undefined) dg = 1; const v = num(n); const p = Math.abs(v).toFixed(dg).split('.'); return (v < 0 ? '−' : '') + group(p[0]) + (dg ? ',' + p[1] : ''); }\nfunction fZl(n) { return fDec(n, 2) + NB + 'zł'; }\nfunction fPct(ratio, dg) { return fDec(num(ratio) * 100, dg === undefined ? 1 : dg) + NB + '%'; }\nfunction ratio(a, b) { return num(b) ? num(a) / num(b) : 0; }\n// Zmiana względna: ▲ +12% / ▼ −5% / = / ▲ nowe\nfunction dRel(cur, prev) {\n  cur = num(cur); prev = num(prev);\n  if (!prev && !cur) return '=';\n  if (!prev) return '▲ nowe';\n  const p = (cur - prev) / prev;\n  if (Math.abs(p) < 0.005) return '=';\n  return (p > 0 ? '▲ +' : '▼ ') + fDec(p * 100, 0) + '%';\n}\n// Zmiana w punktach procentowych (ratio 0..1)\nfunction dPp(cur, prev) {\n  const diff = (num(cur) - num(prev)) * 100;\n  if (Math.abs(diff) < 0.05) return '=';\n  return (diff > 0 ? '▲ +' : '▼ ') + fDec(diff, 1) + NB + 'pp';\n}\n// Pozycja: mniejsza = lepsza. ▲ = awans, ▼ = spadek.\nfunction dPos(cur, prev) {\n  cur = num(cur); prev = num(prev);\n  if (!cur || !prev) return '';\n  const diff = prev - cur;\n  if (Math.abs(diff) < 0.05) return '=';\n  return (diff > 0 ? '▲ awans o ' : '▼ spadek o ') + fDec(Math.abs(diff), 1);\n}\nfunction dZlAbs(cur, prev) { return dRel(cur, prev) + ' (było ' + fZl(prev) + ')'; }\nfunction dayLabel(iso) { const [y, m, d] = iso.split('-').map(Number); return d + NB + MONTHS[m - 1]; }\nfunction rangeLabel(r) {\n  const [y1, m1, d1] = r.start.split('-').map(Number);\n  const [y2, m2, d2] = r.end.split('-').map(Number);\n  if (y1 === y2 && m1 === m2) return d1 + '–' + d2 + NB + MONTHS[m2 - 1];\n  return d1 + NB + MONTHS[m1 - 1] + ' – ' + d2 + NB + MONTHS[m2 - 1];\n}\nfunction shortDate(iso) { if (!iso) return '—'; const dt = DateTime.fromISO(iso).setZone(C.tz); return dt.isValid ? dt.toFormat('d.LL') : '—'; }\nfunction path(url) {\n  let p = String(url || '').replace(/^https?:\\/\\/(www\\.)?lunae\\.pl/, '') || '/';\n  try { p = decodeURI(p); } catch (e) {}\n  return short(p, 48);\n}\n// Pole embeda: max 1024 znaki, ucinamy całe linie.\nfunction field(name, lines, inline) {\n  let out = '';\n  for (const l of lines) {\n    if ((out + l + '\\n').length > 1000) { out += '…'; break; }\n    out += l + '\\n';\n  }\n  return { name: short(name, 250), value: out.trim() || '—', inline: !!inline };\n}\nfunction noData(src, err) { missing.push(src); return 'brak danych: ' + src + (err ? ' (' + err + ')' : ''); }\n\n// ---------- Search Console ----------\nconst seoLines = [];\nconst seoFields = [];\nlet seoPartial = false;\n{\n  const daily = source('GSC · dzienne sumy');\n  if (daily.err) {\n    seoLines.push(noData('Search Console', daily.err));\n    seoPartial = true;\n  } else {\n    const rows = (daily.data[0] && daily.data[0].rows) || [];\n    const agg = (r) => {\n      const sel = rows.filter((x) => x.keys && x.keys[0] >= r.start && x.keys[0] <= r.end);\n      const clicks = sel.reduce((s, x) => s + num(x.clicks), 0);\n      const impr = sel.reduce((s, x) => s + num(x.impressions), 0);\n      const posW = sel.reduce((s, x) => s + num(x.position) * num(x.impressions), 0);\n      return { clicks, impr, ctr: ratio(clicks, impr), pos: impr ? posW / impr : 0, days: sel.length };\n    };\n    const c = agg(C.gsc.cur);\n    const p = agg(C.gsc.prev);\n    seoLines.push('**' + rangeLabel(C.gsc.cur) + '** vs ' + rangeLabel(C.gsc.prev) + ' (GSC ma ~3 dni opóźnienia)');\n    seoLines.push('Kliknięcia **' + fInt(c.clicks) + '** ' + dRel(c.clicks, p.clicks) + ' (było ' + fInt(p.clicks) + ')');\n    seoLines.push('Wyświetlenia **' + fInt(c.impr) + '** ' + dRel(c.impr, p.impr) + ' (było ' + fInt(p.impr) + ')');\n    seoLines.push('CTR **' + fPct(c.ctr) + '** ' + dPp(c.ctr, p.ctr));\n    seoLines.push('Śr. pozycja **' + (c.pos ? fDec(c.pos, 1) : '—') + '** ' + dPos(c.pos, p.pos) + (p.pos ? ' (było ' + fDec(p.pos, 1) + ')' : ''));\n    if (c.days < 7) seoLines.push('_dane za ' + c.days + ' z 7 dni_');\n  }\n\n  const rowsOf = (name) => { const s = source(name); return { err: s.err, rows: (s.data[0] && s.data[0].rows) || [] }; };\n  const qc = rowsOf('GSC · frazy (bieżący)');\n  const qp = rowsOf('GSC · frazy (poprzedni)');\n  const pc = rowsOf('GSC · strony (bieżący)');\n  const pp = rowsOf('GSC · strony (poprzedni)');\n  const sortTop = (rows) => rows.slice().sort((a, b) => num(b.clicks) - num(a.clicks) || num(b.impressions) - num(a.impressions));\n  const toMap = (rows) => { const m = {}; for (const r of rows) m[r.keys[0]] = r; return m; };\n\n  if (qc.err) { seoFields.push(field('Top frazy', [noData('Search Console · frazy', qc.err)])); seoPartial = true; }\n  else {\n    const pm = qp.err ? null : toMap(qp.rows);\n    const lines = sortTop(qc.rows).slice(0, 10).map((r, i) => {\n      const prev = pm && pm[r.keys[0]];\n      const dl = pm ? ' ' + (prev ? dRel(r.clicks, prev.clicks) : 'nowa') : '';\n      return (i + 1) + '. „' + short(r.keys[0], 40) + '” ' + fInt(r.clicks) + ' / ' + fInt(r.impressions) + ' · poz. ' + fDec(r.position, 1) + dl;\n    });\n    seoFields.push(field('Top frazy (kliknięcia / wyświetlenia)', lines.length ? lines : ['brak fraz w tym okresie']));\n  }\n  if (pc.err) { seoFields.push(field('Top strony', [noData('Search Console · strony', pc.err)])); seoPartial = true; }\n  else {\n    const pm = pp.err ? null : toMap(pp.rows);\n    const lines = sortTop(pc.rows).slice(0, 10).map((r, i) => {\n      const prev = pm && pm[r.keys[0]];\n      const dl = pm ? ' ' + (prev ? dRel(r.clicks, prev.clicks) : 'nowa') : '';\n      return (i + 1) + '. `' + path(r.keys[0]) + '` ' + fInt(r.clicks) + ' / ' + fInt(r.impressions) + ' · poz. ' + fDec(r.position, 1) + dl;\n    });\n    seoFields.push(field('Top strony (kliknięcia / wyświetlenia)', lines.length ? lines : ['brak stron w tym okresie']));\n  }\n\n  // Wzrosty / spadki kliknięć (frazy + strony)\n  const movers = [];\n  const addMovers = (cur, prev, kind) => {\n    if (cur.err || prev.err) return;\n    const cm = toMap(cur.rows); const pm = toMap(prev.rows);\n    const keys = new Set([...Object.keys(cm), ...Object.keys(pm)]);\n    for (const k of keys) {\n      const dc = num(cm[k] && cm[k].clicks) - num(pm[k] && pm[k].clicks);\n      if (dc) movers.push({ kind, key: k, dc, cur: num(cm[k] && cm[k].clicks), prev: num(pm[k] && pm[k].clicks) });\n    }\n  };\n  addMovers(qc, qp, 'fraza');\n  addMovers(pc, pp, 'strona');\n  const label = (m) => (m.kind === 'fraza' ? '„' + short(m.key, 36) + '”' : '`' + path(m.key) + '`') + ' ' + fInt(m.prev) + ' → ' + fInt(m.cur);\n  if (qc.err || qp.err || pc.err || pp.err) {\n    if (!qc.err && !pc.err) { seoFields.push(field('Wzrosty / spadki', ['niepełne dane z poprzedniego okresu'])); }\n  } else {\n    const up = movers.filter((m) => m.dc > 0).sort((a, b) => b.dc - a.dc).slice(0, 5).map((m) => '▲ +' + fInt(m.dc) + ' ' + label(m));\n    const down = movers.filter((m) => m.dc < 0).sort((a, b) => a.dc - b.dc).slice(0, 5).map((m) => '▼ ' + fInt(m.dc) + ' ' + label(m));\n    seoFields.push(field('Wzrosty kliknięć', up.length ? up : ['brak'], true));\n    seoFields.push(field('Spadki kliknięć', down.length ? down : ['brak'], true));\n  }\n\n  // Sitemapy\n  const sm = source('GSC · sitemapy');\n  let shoperSitemaps = 0;\n  if (sm.err) { seoFields.push(field('Sitemapy', [noData('Search Console · sitemapy', sm.err)])); seoPartial = true; }\n  else {\n    const list = (sm.data[0] && sm.data[0].sitemap) || [];\n    const lines = list.map((s) => {\n      const isShoper = /GoogleSitemap|\\/console\\//.test(s.path || '');\n      if (isShoper) shoperSitemaps++;\n      const urls = (s.contents || []).filter((x) => x.type === 'web').reduce((a, x) => a + num(x.submitted), 0);\n      const name = isShoper ? 'Shoper (stara)' : '`' + path(s.path) + '`';\n      const prob = num(s.errors) || num(s.warnings) ? ' · **błędy ' + fInt(s.errors) + ' / ostrz. ' + fInt(s.warnings) + '**' : ' · 0 błędów';\n      return name + ' · pobrana ' + shortDate(s.lastDownloaded) + ' · ' + fInt(urls) + ' URL' + prob + (s.isPending ? ' · oczekuje' : '');\n    });\n    if (!list.some((s) => /wp-sitemap\\.xml/.test(s.path || ''))) lines.push('**wp-sitemap.xml nie jest zgłoszona!**');\n    seoFields.push(field('Sitemapy', lines.length ? lines : ['brak zgłoszonych sitemap']));\n  }\n\n  // Inspekcja URL (opcjonalna)\n  const insp = safeAll('GSC · inspekcja URL');\n  if (insp === null || !insp.length) {\n    seoFields.push(field('Indeksacja', [noData('URL Inspection', 'węzeł się nie wykonał')]));\n  } else {\n    const lines = [];\n    let oldRedirect = 0; let oldTotal = 0; let failed = 0; let lastErr = '';\n    C.inspect.forEach((u, i) => {\n      const j = insp[i] || {};\n      if (j.error || !j.inspectionResult) { failed++; lastErr = short(errMsg(j.error), 80); return; }\n      const r = j.inspectionResult;\n      const ix = r.indexStatusResult || {};\n      const mark = ix.verdict === 'PASS' ? '✓' : ix.verdict === 'FAIL' ? '✗' : '·';\n      let line = mark + ' `' + path(u.url) + '` ' + short(ix.coverageState || ix.verdict || '?', 60);\n      if (ix.lastCrawlTime) line += ' · crawl ' + shortDate(ix.lastCrawlTime);\n      if (u.kind === 'old') {\n        oldTotal++;\n        if (/przekierow|redirect/i.test(ix.coverageState || '') || ix.verdict !== 'PASS') oldRedirect++;\n      }\n      if (u.kind === 'product') {\n        const rr = r.richResultsResult;\n        if (rr && rr.detectedItems && rr.detectedItems.length) {\n          const types = rr.detectedItems.map((x) => x.richResultType).join(', ');\n          line += '\\n  wyniki rozszerzone: ' + short(types, 70) + ' → ' + (rr.verdict === 'PASS' ? 'OK' : rr.verdict === 'FAIL' ? '**błędy**' : rr.verdict || '?');\n        } else {\n          line += '\\n  wyniki rozszerzone: nie wykryto';\n        }\n      }\n      if (ix.googleCanonical && ix.userCanonical && ix.googleCanonical !== ix.userCanonical && u.kind !== 'old') {\n        line += '\\n  kanoniczny Google: `' + path(ix.googleCanonical) + '`';\n      }\n      lines.push(line);\n    });\n    if (failed === C.inspect.length) {\n      lines.length = 0;\n      lines.push(noData('URL Inspection', lastErr));\n    } else if (failed) {\n      lines.push('_' + failed + ' URL bez wyniku (' + lastErr + ')_');\n    }\n    const oldExpected = C.inspect.filter((u) => u.kind === 'old').length;\n    if (shoperSitemaps && oldExpected && oldTotal === oldExpected && oldRedirect === oldExpected) {\n      lines.push('Stare adresy Shopera Google widzi już jako przekierowanie → można usunąć ' + shoperSitemaps + ' sitemapy Shopera w GSC.');\n    } else if (shoperSitemaps) {\n      lines.push('Sitemapy Shopera nadal zgłoszone (' + shoperSitemaps + ') — usunąć, gdy stare /pl/ URL-e będą „przekierowaniem”.');\n    }\n    seoFields.push(field('Indeksacja (URL Inspection)', lines));\n  }\n}\n\n// ---------- GA4 ----------\nconst trafficLines = [];\nconst trafficFields = [];\nlet trafficPartial = false;\nlet ga4 = null;\n{\n  const g = source('GA4 · raporty');\n  const reports = (g.data[0] && g.data[0].reports) || null;\n  if (g.err || !reports) {\n    trafficLines.push(noData('GA4', g.err || 'pusta odpowiedź'));\n    trafficPartial = true;\n  } else {\n    const parse = (rep) => {\n      const dh = (rep.dimensionHeaders || []).map((h) => h.name);\n      const mh = (rep.metricHeaders || []).map((h) => h.name);\n      return (rep.rows || []).map((row) => {\n        const dims = {}; const m = {};\n        dh.forEach((n, i) => { dims[n] = row.dimensionValues[i].value; });\n        mh.forEach((n, i) => { m[n] = num(row.metricValues[i].value); });\n        return { dims, m };\n      });\n    };\n    const tot = parse(reports[0] || {});\n    const pick = (rows, range) => (rows.find((r) => (r.dims.dateRange || 'cur') === range) || { m: {} }).m;\n    const c = pick(tot, 'cur'); const p = pick(tot, 'prev');\n    ga4 = { c, p };\n    trafficLines.push('**GA4** · ' + rangeLabel(C.week.cur) + ' vs ' + rangeLabel(C.week.prev));\n    trafficLines.push('Sesje **' + fInt(c.sessions) + '** ' + dRel(c.sessions, p.sessions) + ' · użytkownicy **' + fInt(c.totalUsers) + '** ' + dRel(c.totalUsers, p.totalUsers));\n    trafficLines.push('Zakupy (GA4) **' + fInt(c.ecommercePurchases) + '** ' + dRel(c.ecommercePurchases, p.ecommercePurchases) + ' · przychód **' + fZl(c.purchaseRevenue) + '** ' + dRel(c.purchaseRevenue, p.purchaseRevenue));\n    trafficLines.push('Konwersja (zakupy / sesje) **' + fPct(ratio(c.ecommercePurchases, c.sessions), 2) + '** ' + dPp(ratio(c.ecommercePurchases, c.sessions), ratio(p.ecommercePurchases, p.sessions)));\n\n    const ch = parse(reports[1] || {});\n    const byCh = {};\n    for (const r of ch) {\n      const k = r.dims.sessionDefaultChannelGroup || '(brak)';\n      byCh[k] = byCh[k] || { cur: {}, prev: {} };\n      byCh[k][(r.dims.dateRange || 'cur') === 'prev' ? 'prev' : 'cur'] = r.m;\n    }\n    const totalPurch = num(c.ecommercePurchases);\n    const chLines = Object.entries(byCh)\n      .sort((a, b) => num(b[1].cur.sessions) - num(a[1].cur.sessions))\n      .slice(0, 8)\n      .map(([k, v]) => {\n        const pu = num(v.cur.ecommercePurchases);\n        return k + ' **' + fInt(v.cur.sessions) + '** ' + dRel(v.cur.sessions, v.prev.sessions) +\n          (pu ? ' · zak. ' + fInt(pu) + (totalPurch ? ' (' + fPct(pu / totalPurch, 0) + ')' : '') : '');\n      });\n    trafficFields.push(field('Kanały (sesje · zakupy, udział w zakupach)', chLines.length ? chLines : ['brak sesji']));\n\n    const lp = parse(reports[2] || {});\n    const lpLines = lp.slice(0, 5).map((r, i) => (i + 1) + '. `' + path(r.dims.landingPage || r.dims.landingPagePlusQueryString) + '` ' + fInt(r.m.sessions) + ' ses.' + (r.m.ecommercePurchases ? ' · ' + fInt(r.m.ecommercePurchases) + ' zak.' : ''));\n    trafficFields.push(field('Strony wejścia (top 5)', lpLines.length ? lpLines : ['brak danych w tym okresie']));\n  }\n}\n\n// ---------- WooCommerce ----------\nlet woo = null;\n{\n  const w = source('Woo · zamówienia');\n  if (w.err) {\n    trafficFields.push(field('Sklep (WooCommerce)', [noData('WooCommerce', w.err)]));\n    trafficPartial = true;\n  } else {\n    const orders = w.data.filter((o) => o && o.id);\n    const inRange = (o, r) => { const dd = String(o.date_created || '').slice(0, 10); return dd >= r.start && dd <= r.end; };\n    const value = (o) => num(o.total) + (o.refunds || []).reduce((s, x) => s + num(x.total), 0); // refunds.total są ujemne\n    const sum = (r) => { const sel = orders.filter((o) => inRange(o, r)); return { n: sel.length, rev: sel.reduce((s, o) => s + value(o), 0) }; };\n    const c = sum(C.week.cur); const p = sum(C.week.prev);\n    woo = { c, p, capped: orders.length >= 100 };\n    const lines = [\n      'Zamówienia opłacone **' + fInt(c.n) + '** ' + dRel(c.n, p.n) + ' (było ' + fInt(p.n) + ')',\n      'Przychód brutto **' + fZl(c.rev) + '** ' + dZlAbs(c.rev, p.rev),\n      'Śr. koszyk **' + (c.n ? fZl(c.rev / c.n) : '—') + '**' + (p.n ? ' (było ' + fZl(p.rev / p.n) + ')' : ''),\n    ];\n    if (ga4) {\n      const g = ga4.c.ecommercePurchases || 0;\n      if (g < c.n) lines.push('GA4 zarejestrował ' + fInt(g) + ' z ' + fInt(c.n) + ' zamówień (zgody cookies / blokery)');\n      else if (g > c.n) lines.push('GA4: ' + fInt(g) + ' zakupy vs ' + fInt(c.n) + ' opłacone w sklepie (np. testowe / nieopłacone zamówienia)');\n      else lines.push('GA4 zgodny ze sklepem (' + fInt(g) + ')');\n    }\n    if (woo.capped) lines.push('_≥100 zamówień w 2 tyg. — wynik może być niepełny_');\n    trafficFields.unshift(field('Sklep (WooCommerce, processing + completed)', lines));\n  }\n}\n\n// ---------- Meta ----------\nconst adsLines = [];\nconst adsFields = [];\nlet adsPartial = false;\nconst pickAction = (arr) => {\n  const list = arr || [];\n  for (const t of ['omni_purchase', 'purchase', 'offsite_conversion.fb_pixel_purchase']) {\n    const f = list.find((a) => a.action_type === t);\n    if (f) return num(f.value);\n  }\n  return 0;\n};\n{\n  const m = source('Meta · kampania (2 tyg.)');\n  if (m.err) {\n    adsLines.push(noData('Meta Ads', m.err));\n    adsPartial = true;\n  } else {\n    const rows = (m.data[0] && m.data[0].data) || [];\n    const find = (r) => rows.find((x) => x.date_start === r.start) || {};\n    const c = find(C.week.cur); const p = find(C.week.prev);\n    const k = (x) => ({\n      spend: num(x.spend), impr: num(x.impressions), reach: num(x.reach), clicks: num(x.inline_link_clicks),\n      purch: pickAction(x.actions), value: pickAction(x.action_values),\n    });\n    const a = k(c); const b = k(p);\n    adsLines.push('**' + rangeLabel(C.week.cur) + '** vs ' + rangeLabel(C.week.prev) + ' · kampania Evergreen');\n    adsLines.push('Wydatki **' + fZl(a.spend) + '** ' + dZlAbs(a.spend, b.spend));\n    adsLines.push('Wyświetlenia **' + fInt(a.impr) + '** ' + dRel(a.impr, b.impr) + ' · zasięg **' + fInt(a.reach) + '** ' + dRel(a.reach, b.reach));\n    adsLines.push('Kliknięcia w link **' + fInt(a.clicks) + '** ' + dRel(a.clicks, b.clicks) + ' · CTR **' + fPct(ratio(a.clicks, a.impr), 2) + '** ' + dPp(ratio(a.clicks, a.impr), ratio(b.clicks, b.impr)));\n    adsLines.push('CPC (link) **' + (a.clicks ? fZl(a.spend / a.clicks) : '—') + '**' + (b.clicks ? ' (było ' + fZl(b.spend / b.clicks) + ')' : ''));\n    adsLines.push('Zakupy wg Meta **' + fInt(a.purch) + '** (' + fZl(a.value) + ') ' + dRel(a.purch, b.purch) + (a.spend ? ' · ROAS Meta ' + fDec(ratio(a.value, a.spend), 2) : ''));\n    if (woo) {\n      const roas = ratio(woo.c.rev, a.spend); const roasP = ratio(woo.p.rev, b.spend);\n      adsLines.push('**ROAS blended (przychód Woo ÷ wydatki Meta): ' + (a.spend ? fDec(roas, 2) : '—') + '**' + (b.spend ? ' (było ' + fDec(roasP, 2) + ')' : ''));\n    } else {\n      adsLines.push('ROAS blended: brak danych z WooCommerce');\n    }\n  }\n\n  const st = source('Meta · status kampanii');\n  if (!st.err && st.data[0]) {\n    const s = st.data[0];\n    const total = num(s.insights && s.insights.data && s.insights.data[0] && s.insights.data[0].spend);\n    const cap = num(s.spend_cap) ? num(s.spend_cap) / 100 : C.metaSpendCapZl;\n    const STATUS = { ACTIVE: 'aktywna', PAUSED: 'wstrzymana', CAMPAIGN_PAUSED: 'wstrzymana', ARCHIVED: 'zarchiwizowana', DELETED: 'usunięta', IN_PROCESS: 'w przetwarzaniu', WITH_ISSUES: 'z problemami' };\n    adsLines.push('Status: **' + (STATUS[s.effective_status] || s.effective_status || '?') + '** · wydane łącznie ' + fZl(total) + ' / ' + fZl(cap) + ' (' + fPct(ratio(total, cap), 0) + ')');\n  }\n\n  const ads = source('Meta · reklamy (tydzień)');\n  if (ads.err) { adsFields.push(field('Reklamy', [noData('Meta Ads · reklamy', ads.err)])); adsPartial = true; }\n  else {\n    const list = ((ads.data[0] && ads.data[0].data) || [])\n      .map((x) => ({ name: x.ad_name || x.ad_id, spend: num(x.spend), impr: num(x.impressions), clicks: num(x.inline_link_clicks), purch: pickAction(x.actions), value: pickAction(x.action_values) }))\n      .sort((x, y) => y.spend - x.spend);\n    const lines = list.slice(0, 8).map((x, i) => (i + 1) + '. ' + short(x.name, 38) + ' — **' + fZl(x.spend) + '** · ' + fInt(x.clicks) + ' kl. · CTR ' + fPct(ratio(x.clicks, x.impr), 2) +\n      ' · zak. ' + fInt(x.purch) + (x.purch ? ' (' + fZl(x.value) + ')' : '') + (x.clicks ? ' · CPC ' + fZl(x.spend / x.clicks) : ''));\n    adsFields.push(field('Reklamy wg wydatków (zakupy wg Meta)', lines.length ? lines : ['brak wyświetleń w tym tygodniu']));\n  }\n}\n\n// ---------- Discord ----------\nconst COLORS = { seo: 0x4f7cac, traffic: 0x5f9e7a, ads: 0xb5677d, warn: 0xd9a400 };\nconst ts = DateTime.now().toUTC().toISO();\nconst embeds = [\n  { title: 'SEO · Google Search Console', color: seoPartial ? COLORS.warn : COLORS.seo, description: seoLines.join('\\n'), fields: seoFields, timestamp: ts },\n  { title: 'Ruch i sprzedaż · GA4 + WooCommerce', color: trafficPartial ? COLORS.warn : COLORS.traffic, description: trafficLines.join('\\n'), fields: trafficFields, timestamp: ts },\n  { title: 'Reklamy · Meta', color: adsPartial ? COLORS.warn : COLORS.ads, description: adsLines.join('\\n'), fields: adsFields,\n    footer: { text: 'Zakupy wg Meta są niepełne (piksel) — decyzje opieraj na ROAS blended.' }, timestamp: ts },\n];\n// Limity Discorda: description ≤ 4096, ≤ 25 pól, łącznie ≤ 6000 znaków.\nconst clip = (t, n) => (t.length > n ? t.slice(0, n - 1) + '…' : t);\nfor (const e of embeds) { e.description = clip(e.description, 4000) || '—'; e.fields = e.fields.slice(0, 25); }\nconst size = () => embeds.reduce((s, e) => s + e.title.length + e.description.length + (e.footer ? e.footer.text.length : 0) + e.fields.reduce((a, f) => a + f.name.length + f.value.length, 0), 0);\nwhile (size() > 5900) {\n  const biggest = embeds.flatMap((e) => e.fields).sort((a, b) => b.value.length - a.value.length)[0];\n  if (!biggest || biggest.value.length < 120) break;\n  const lines = biggest.value.split('\\n');\n  biggest.value = lines.slice(0, Math.max(1, lines.length - 2)).join('\\n') + '\\n…';\n}\n\nconst uniqMissing = [...new Set(missing.map((m) => m.split(' · ')[0]))];\nlet content = '📊 **Raport tygodniowy lunae** · ' + rangeLabel(C.week.cur);\nif (uniqMissing.length) content += '\\nBrak danych: ' + uniqMissing.join(', ');\n\nreturn [{ json: { content: short(content, 1900), embeds, missing: uniqMissing, size: size() } }];\n"
+      },
+      "id": "323adc4e-37ba-46a2-9a4c-e7c32bfbf2e5",
+      "name": "Złóż raport",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "executeOnce": true,
+      "position": [
+        2080,
+        224
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.content }}",
+        "options": {},
+        "embeds": {
+          "values": [
+            {
+              "inputMethod": "json",
+              "json": "={{ JSON.stringify($json.embeds[0]) }}"
+            },
+            {
+              "inputMethod": "json",
+              "json": "={{ JSON.stringify($json.embeds[1]) }}"
+            },
+            {
+              "inputMethod": "json",
+              "json": "={{ JSON.stringify($json.embeds[2]) }}"
+            }
+          ]
+        }
+      },
+      "id": "8989cb97-5aaf-4494-bf3f-c7ae7bd73809",
+      "name": "Discord · raport",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "position": [
+        2304,
+        224
+      ],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "REDACTED",
+          "name": "Discord · lunae (webhook)"
+        }
+      }
+    },
+    {
+      "parameters": {},
+      "id": "29f7805c-439c-4d5f-9fd3-d21ac50b5c1f",
+      "name": "Uruchom ręcznie",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Raport tygodniowy (SEO + reklamy)\nPon 08:30 Europe/Warsaw → Discord (3 embedy).\n- GSC: 7 dni kończące się 3 dni temu vs poprzednie 7\n- GA4 / Woo / Meta: ostatni pełny tydzień pon–nd vs poprzedni\n- Każde źródło ma *On Error → Continue*: błąd = „brak danych: …”, raport i tak wychodzi.\n- Uprawnienia SA: GA4 Viewer (<GA4_PROPERTY_ID>), użytkownik w GSC sc-domain:lunae.pl; API: Search Console API + Google Analytics Data API.\n- Wersja Graph API w węźle „Okresy i konfiguracja”.",
+        "height": 272,
+        "width": 592,
+        "color": 7
+      },
+      "id": "2f007f30-551b-4e70-a60d-ead626e5e1bd",
+      "name": "Sticky Note bf1f1e68",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        192,
+        -208
+      ]
+    }
+  ],
+  "connections": {
+    "Poniedziałek 08:30": {
+      "main": [
+        [
+          {
+            "node": "Okresy i konfiguracja",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Okresy i konfiguracja": {
+      "main": [
+        [
+          {
+            "node": "GSC · dzienne sumy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GSC · dzienne sumy": {
+      "main": [
+        [
+          {
+            "node": "GSC · frazy (bieżący)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GSC · frazy (bieżący)": {
+      "main": [
+        [
+          {
+            "node": "GSC · frazy (poprzedni)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GSC · frazy (poprzedni)": {
+      "main": [
+        [
+          {
+            "node": "GSC · strony (bieżący)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GSC · strony (bieżący)": {
+      "main": [
+        [
+          {
+            "node": "GSC · strony (poprzedni)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GSC · strony (poprzedni)": {
+      "main": [
+        [
+          {
+            "node": "GSC · sitemapy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GSC · sitemapy": {
+      "main": [
+        [
+          {
+            "node": "URL-e do inspekcji",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "URL-e do inspekcji": {
+      "main": [
+        [
+          {
+            "node": "GSC · inspekcja URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GSC · inspekcja URL": {
+      "main": [
+        [
+          {
+            "node": "GA4 · raporty",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GA4 · raporty": {
+      "main": [
+        [
+          {
+            "node": "Woo · zamówienia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Woo · zamówienia": {
+      "main": [
+        [
+          {
+            "node": "Meta · kampania (2 tyg.)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta · kampania (2 tyg.)": {
+      "main": [
+        [
+          {
+            "node": "Meta · status kampanii",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta · status kampanii": {
+      "main": [
+        [
+          {
+            "node": "Meta · reklamy (tydzień)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Meta · reklamy (tydzień)": {
+      "main": [
+        [
+          {
+            "node": "Złóż raport",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Złóż raport": {
+      "main": [
+        [
+          {
+            "node": "Discord · raport",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Uruchom ręcznie": {
+      "main": [
+        [
+          {
+            "node": "Okresy i konfiguracja",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Warsaw",
+    "binaryMode": "separate"
+  }
+}

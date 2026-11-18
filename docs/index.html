@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Łukasz Pietras · work samples</title>
+<meta name="description" content="What I build with and without AI: a support agent at work, and the shop I built for my partner's brand.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="sheet">
+
+<section class="title">
+  <h1>Łukasz Pietras</h1>
+  <p class="lede">Here's what I build with and without AI, at work and outside it.</p>
+  <p class="note">Most of my work belongs to my employer, so I can't show that code. I'll describe it first. After that come my own projects, where everything's open and the code is in the repo.</p>
+  <nav class="links">
+    <a href="https://github.com/lukasz-pietras/work-samples/">The repo</a>
+    <a href="https://lunae.pl">The shop</a>
+    <a href="https://pietras.dev">My CV</a>
+  </nav>
+</section>
+
+<section id="work">
+  <h2>At work</h2>
+  <p class="intro">I'm the only support engineer at Shelf, an enterprise AI company. Instead of doing every investigation by hand, I built an agent that my colleagues and I talk to in Slack.</p>
+  <ol class="flow"><li class="t">Mention or DM in Slack</li><li>Coordinator agent</li><li>Helper agents for bigger jobs</li><li>Looks at Jira, GitHub, CI, AWS, Datadog</li><li class="o">Answer or draft</li><li>A person approves and sends</li></ol>
+  <table class="spec">
+    <tr><td>Where it lives</td><td>A dedicated cloud server. A Slack app passes it mentions and DMs from me and approved colleagues.</td></tr>
+    <tr><td>Who does the work</td><td>A coordinator agent on Claude, with Codex as a backup. For bigger jobs it spins up helper agents.</td></tr>
+    <tr><td>What it can see</td><td>Jira, GitHub, CI, AWS and Datadog, at engineer level. Read-only by default.</td></tr>
+    <tr><td>What it asks me first</td><td>Production data changes, merges, releases, deploys, deletes and access changes.</td></tr>
+    <tr><td>What it never does</td><td>Post anything a customer can see. Customer replies are drafts, and a person sends them.</td></tr>
+    <tr><td>What we use it for</td><td>Troubleshooting, feature-request triage, documentation and log auditing. Plus scripts and MCP connectors for content exports, document uploads and bulk metadata updates.</td></tr>
+  </table>
+
+  <p class="intro">Here's how support changed between July–September 2025, just before I took over, and the same three months in 2026.</p>
+  <div class="bars" role="img" aria-label="Resolution time in days, third quarter 2025 against third quarter 2026. Average 24.6 to 3.8, median 12.0 to 0.8.">
+    <div class="row"><span>Average time to resolve</span><div><i class="was" style="width:98.4%"><em>24.6 days</em></i><i class="now" style="width:15.3%"><em>3.8 days</em></i></div><b>−84.5%</b></div>
+    <div class="row"><span>Median time to resolve</span><div><i class="was" style="width:48%"><em>12.0 days</em></i><i class="now" style="width:3.1%"><em>0.8 days</em></i></div><b>−93.5%</b></div>
+  </div>
+  <table class="spec">
+    <tr><td>Tickets coming in</td><td>329 → 472, up 43.5%. We kept up: 363 → 470 resolved.</td></tr>
+    <tr><td>First response</td><td>Median went from 13.1 hours to 33 minutes.</td></tr>
+    <tr><td>Resolved within a day</td><td>18.7% → 57% of tickets.</td></tr>
+    <tr><td>Dragging on 30+ days</td><td>94 tickets → 7.</td></tr>
+  </table>
+  <p class="src">Team numbers, straight from Jira. "Resolved" means the case was closed or handed to the product backlog.</p>
+</section>
+
+<section id="own">
+  <h2>Outside work: lunae.pl</h2>
+  <p class="intro">lunæ is my partner's lingerie brand. She created it, designs everything and runs the brand. I do the technical side: the shop, the server and the automation.</p>
+  <div class="wins">
+    <figure class="win">
+      <div class="bar"><span></span><a href="https://lunae.pl">lunae.pl</a></div>
+      <a class="screen" href="https://lunae.pl"><img src="img/lunae-home.jpg" alt="Home page of the lunae.pl shop" width="1280" height="800" loading="lazy"></a>
+    </figure>
+  </div>
+  <p class="intro">I built it with Claude Code and Codex agents. They wrote most of the code. I wrote the briefs, made the calls and signed off on everything that went live. Build plus migration took 10 days.</p>
+</section>
+
+<section id="build">
+  <h2>Building the shop</h2>
+  <p class="intro">I started from an empty server and WooCommerce in Docker.</p>
+  <table class="spec">
+    <tr><td>Theme</td><td>Written from scratch. No parent theme, no page builder. 91 files, about 7,600 lines.</td></tr>
+    <tr><td>Payments</td><td>Przelewy24. BLIK right in the checkout, cards and wallets on the provider's page. Tested with a real 1 zł order.</td></tr>
+    <tr><td>Shipping</td><td>Apaczka with three carriers, a pickup-point picker in the checkout, and labels that get the order number filled in for me.</td></tr>
+    <tr><td>Invoices</td><td>VAT invoices with my own PDF template, a company-invoice option at checkout, and company invoices sent automatically to KSeF, Poland's e-invoicing system.</td></tr>
+    <tr><td>E-mail</td><td>Order mails from the shop's own domain with SPF, DKIM and DMARC. The newsletter runs on self-hosted listmonk with double opt-in.</td></tr>
+    <tr><td>Tracking</td><td>My own cookie banner. GA4 and Meta Pixel only load after consent, and a test script makes sure it stays that way.</td></tr>
+  </table>
+</section>
+
+<section id="c1">
+  <h2>Moving the live shop over</h2>
+  <p class="intro">The brand was already selling on Shoper, a hosted platform. So the next job was moving everything across without losing orders, stock or Google rankings.</p>
+  <table class="spec">
+    <tr><td>Getting the data out</td><td>A <a href="https://github.com/lukasz-pietras/work-samples/blob/main/samples/migration/shoper-export.py">script</a> pulls about 40 kinds of records from Shoper's API without tripping the rate limit.</td></tr>
+    <tr><td>Cleaning it up</td><td>The export was messy: guest checkouts saved as user accounts, discounts missing from order lines, stock split across two kinds of rows. The <a href="https://github.com/lukasz-pietras/work-samples/blob/main/samples/migration/import-shoper.php">importer</a> sorts that out and is safe to run again.</td></tr>
+    <tr><td>Checking it</td><td>38 of 38 stock rows matched. 18 orders and 7 customer accounts came across, and the order total matched Shoper's.</td></tr>
+    <tr><td>Old links</td><td>Every old URL <a href="https://github.com/lukasz-pietras/work-samples/blob/main/samples/migration/lunae-redirects.php">redirects</a> to its new page, images included. A self-test checks 132 paths.</td></tr>
+    <tr><td>Practice run</td><td>A full dry run on staging showed one payment method failing. It turned out to fail only in the provider's sandbox, which I confirmed with a real 1 zł payment.</td></tr>
+    <tr><td>The switch</td><td>About 36 minutes, following a written runbook.</td></tr>
+    <tr><td>What broke quietly</td><td>After the import, old orders were missing from the sales reports. The import had skipped the lookup tables the reports read from. I found it and resynced them.</td></tr>
+  </table>
+</section>
+
+<section id="c2">
+  <h2>Six n8n workflows</h2>
+  <p class="intro">They keep an eye on the shop so I don't have to. They only read from it, and they only message me on Discord when something changes. An agent built them through the n8n API. The <a href="https://github.com/lukasz-pietras/work-samples/tree/main/samples/n8n-workflows">exports are in the repo</a>.</p>
+
+  <div class="wf">
+    <h3>New orders</h3>
+    <ol class="flow"><li class="t">Every 5 min</li><li>Orders changed in last 2 h</li><li>New, failed, or unpaid over 60 min?</li><li>Skip already sent</li><li class="o">Discord</li><li>Mark as sent</li></ol>
+    <p>No names, e-mails or addresses leave the shop. Just the city.</p>
+  </div>
+  <div class="wf">
+    <h3>Daily report</h3>
+    <ol class="flow"><li class="t">08:00</li><li>Orders and refunds</li><li>Ad spend from Meta</li><li>Sales against ad spend</li><li class="o">Discord</li></ol>
+    <p>If Meta's API is down, the report still goes out and says what's missing.</p>
+  </div>
+  <div class="wf">
+    <h3>Stock</h3>
+    <ol class="flow"><li class="t">Every 30 min</li><li>Products and variants</li><li>Compare with last run</li><li>Sold out? Any ads still running?</li><li class="o">Discord, only on change</li><li>Save state</li></ol>
+    <p>It tells me when ads are still running for something that's sold out. It never turns them off itself.</p>
+  </div>
+  <div class="wf">
+    <h3>Weekly SEO and ads</h3>
+    <ol class="flow"><li class="t">Monday 08:30</li><li>Search Console</li><li>GA4</li><li>Orders</li><li>Meta ads</li><li>Week over week</li><li class="o">Discord</li></ol>
+    <p>This replaced the SEO check-ins I'd planned to do by hand after the migration.</p>
+  </div>
+  <div class="wf">
+    <h3>Health check</h3>
+    <ol class="flow"><li class="t">Every 5 min</li><li>6 public URLs</li><li>Disk, memory, containers, backups</li><li>Failed payments in 24 h</li><li>Compare with last run</li><li class="o">Discord, only on change</li></ol>
+    <p>Tells me when something breaks, nags every 6 hours, and tells me when it's fixed.</p>
+  </div>
+  <div class="wf">
+    <h3>Workflow errors</h3>
+    <ol class="flow"><li class="t">Any workflow fails</li><li>Build alert</li><li>At most one per hour</li><li class="o">Discord</li><li>Count the repeats</li></ol>
+    <p>Watches the other five.</p>
+  </div>
+</section>
+
+<section id="how">
+  <h2>Keeping the AI honest</h2>
+  <p class="intro">Agents are fast, and sometimes confidently wrong. So nothing goes live on their say-so.</p>
+  <ol class="loop">
+    <li class="me"><b>Brief</b><span>I write a short task file: what to build, which files the agent owns, how to test it.</span></li>
+    <li><b>Agents</b><span>Each one works in its own git worktree, so several can run at once without stepping on each other.</span></li>
+    <li><b>Proof</b><span>Each agent hands back a written report and screenshots.</span></li>
+    <li class="me"><b>Review</b><span>A second agent reviews the diff. Then it's a small pull request, and I approve the merge.</span></li>
+    <li class="me"><b>Deploy</b><span>Backup first, then one script. Nothing goes to production without my OK.</span></li>
+    <li><b>Check</b><span>Test scripts replay the real flows: consent, tracking, checkout, redirects.</span></li>
+  </ol>
+
+  <p class="intro">It still went wrong a few times. Here's what happened and what I changed.</p>
+  <table class="spec">
+    <tr><td>One agent's merge overwrote another's file</td><td>Now every agent has a list of files it owns, and only those get merged.</td></tr>
+    <tr><td>A command said "success" and changed nothing. An API said "no errors" while a job was stuck.</td><td>I don't trust success messages or empty error lists. Every change gets read back or checked on the real page.</td></tr>
+    <tr><td>An agent made a test ad campaign in the wrong account</td><td>It was still paused, so I deleted it. Since then, anything that spends money needs my OK.</td></tr>
+  </table>
+
+  <p class="intro">I also have an assistant on my phone, through Discord, for questions like "did that order go through?". It can look but it can't change anything, and that isn't left to the model.</p>
+  <table class="spec">
+    <tr><td>Server</td><td>Its <a href="https://github.com/lukasz-pietras/work-samples/blob/main/samples/ai-guardrails/claude-ro-gate.sh">SSH key</a> can only run three read commands. Everything else is refused and logged.</td></tr>
+    <tr><td>Shop data</td><td>Its <a href="https://github.com/lukasz-pietras/work-samples/blob/main/samples/ai-guardrails/lunae-mcp-readonly.php">shop user</a> is read-only.</td></tr>
+    <tr><td>Ads</td><td>An <a href="https://github.com/lukasz-pietras/work-samples/blob/main/samples/ai-guardrails/meta-ads-ro-hook.py">allowlist</a> lets 57 read tools through and blocks the rest, including any that get added later.</td></tr>
+    <tr><td>E-mail</td><td>Read-only, shop mailboxes only, and whatever an e-mail says is treated as untrusted.</td></tr>
+  </table>
+</section>
+
+<section id="c4">
+  <h2>Two small ones</h2>
+  <div class="cols">
+    <div>
+      <h3>Shipping labels print themselves</h3>
+      <p>The courier sends an A4 PDF with the label in one corner. My printer takes 100 × 150 mm stickers. About <a href="https://github.com/lukasz-pietras/work-samples/tree/main/samples/label-autoprint">100 lines of shell</a> now crop and print each label the moment I download it. At first the labels came out with blank bands. The agent worked out that the printer was dropping data, and a 30-line driver patch fixed it.</p>
+    </div>
+    <div>
+      <h3>An iPhone bug that stays fixed</h3>
+      <p>The price filter didn't work on iPhone. A <a href="https://github.com/lukasz-pietras/work-samples/blob/main/samples/migration/qa-price-filter.mjs">Playwright script</a> reproduces it in WebKit, Chromium and Firefox. Three causes, all fixed: from 6 and 8 of 20 checks passing to 20 of 20. The script stays in the repo so the bug can't sneak back.</p>
+    </div>
+  </div>
+</section>
+
+<section id="more">
+  <h2>Where it all runs</h2>
+  <p class="intro">One VPS that I set up and look after myself. It hosts the shop, the listmonk newsletter, n8n, and game servers for my friends and me. Backups run every night, encrypted and off-site, and I get an alert if one goes missing.</p>
+  <p class="intro">And this is my CV site, live.</p>
+  <div class="wins">
+    <figure class="win">
+      <div class="bar"><span></span><a href="https://pietras.dev">pietras.dev</a></div>
+      <div class="screen live" style="background-image:url(img/pietras-home.jpg)"><iframe src="https://pietras.dev/" title="pietras.dev, live" loading="lazy" width="1280" height="800"></iframe></div>
+    </figure>
+  </div>
+</section>
+
+<footer>
+  <p><a href="https://pietras.dev">pietras.dev</a> · <a href="https://github.com/lukasz-pietras">github.com/lukasz-pietras</a> · <a href="https://www.linkedin.com/in/pietraslukasz/">LinkedIn</a></p>
+</footer>
+
+</div>
+<script>
+for (const box of document.querySelectorAll('.screen.live')) {
+  const fit = () => box.style.setProperty('--s', box.clientWidth / 1280);
+  new ResizeObserver(fit).observe(box); fit();
+}
+</script>
+</body>
+</html>

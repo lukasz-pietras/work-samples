@@ -1,0 +1,753 @@
+{
+  "name": "lunae · Health check",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes"
+            }
+          ]
+        }
+      },
+      "id": "6b3512ef-31bf-4843-838a-11509fbeb382",
+      "name": "Every 5 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Public URL checks (GET, 15 s timeout, redirects followed, no-cache).\n// marker = text that must appear in the response body. severity: crit = shop broken, warn = side service.\nconst CHECKS = [\n  { key: 'home',       label: 'Strona główna',          url: 'https://lunae.pl/',                                            marker: 'wp-content/themes/lunae/',  severity: 'crit' },\n  { key: 'product',    label: 'Strona produktu',        url: 'https://lunae.pl/produkt/figi-myosotis-alba/',                 marker: 'product_title',             severity: 'crit' },\n  { key: 'store_api',  label: 'Store API (produkty)',   url: 'https://lunae.pl/wp-json/wc/store/v1/products?per_page=1',     marker: '[{\"id\":',                   severity: 'crit' },\n  { key: 'cart',       label: 'Koszyk',                 url: 'https://lunae.pl/koszyk/',                                     marker: 'wp-block-woocommerce-cart', severity: 'crit' },\n  { key: 'checkout',   label: 'Zamówienie (checkout)',  url: 'https://lunae.pl/zamowienie/',                                 marker: 'wp-block-woocommerce-c',    severity: 'crit' },\n  { key: 'newsletter', label: 'Newsletter (listmonk)',  url: 'https://newsletter.lunae.pl/health',                           marker: '\"data\":true',               severity: 'warn' },\n];\nreturn CHECKS.map(c => ({ json: Object.assign({ expect_status: 200 }, c) }));"
+      },
+      "id": "d5ea50f6-cf1f-4d86-abd2-65dca8bbec7c",
+      "name": "Define HTTP checks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { results: $input.all().map(i => i.json) } }];"
+      },
+      "id": "2d5b5c25-c7f3-4d41-8a50-e90e627b5df3",
+      "name": "Collect HTTP results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "/home/node/.n8n-files/status/host.json",
+        "options": {}
+      },
+      "id": "c313f99f-32c2-430b-9470-27de3115564c",
+      "name": "Read host.json",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        880,
+        192
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "fromJson",
+        "options": {}
+      },
+      "id": "217d2e8e-27f7-4c58-91ee-84d741774dd9",
+      "name": "Parse host.json",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.2,
+      "position": [
+        1104,
+        192
+      ],
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://lunae.pl/wp-json/wc/v3/orders",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wooCommerceApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "status",
+              "value": "failed"
+            },
+            {
+              "name": "after",
+              "value": "={{ $now.minus({ hours: 24 }).toUTC().toISO() }}"
+            },
+            {
+              "name": "dates_are_gmt",
+              "value": "true"
+            },
+            {
+              "name": "per_page",
+              "value": "50"
+            },
+            {
+              "name": "_fields",
+              "value": "id,number,payment_method_title"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "30c69d4f-9a12-4f2f-bbd6-067bd78c4820",
+      "name": "Woo failed orders (24 h)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1328,
+        192
+      ],
+      "credentials": {
+        "wooCommerceApi": {
+          "id": "REDACTED",
+          "name": "WooCommerce · lunae.pl (read-only)"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ekDybfkORT4elRGu",
+          "cachedResultName": "lunae_health_state"
+        },
+        "returnAll": true
+      },
+      "id": "4ebecd77-d635-4209-919d-5b6cb5684c91",
+      "name": "Load state",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1552,
+        192
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== Progi / ustawienia (thresholds) =====\nconst SLOW_MS = 5000;                 // HTTP response slower than this = \"wolno\"\nconst HOST_STALE_MIN = 15;            // host.json older than this = stale\nconst DISK_WARN_PCT = 85;             // disk used % -> warning\nconst DISK_CRIT_PCT = 95;             // disk used % -> critical\nconst MEM_MIN_AVAILABLE_MB = 300;     // available RAM below this -> warning\nconst BACKUP_MAX_AGE_H = 30;          // lunae / n8n backup older than this -> warning\nconst STALE_CLI_MAX = 10;             // leftover wp-cli containers >= this -> low\nconst WOO_FAILED_24H_MAX = 2;         // failed orders in last 24 h >= this -> warning\nconst HTTP_CONFIRM_RUNS = 2;          // consecutive failing runs before an HTTP alert (~10 min)\nconst REMIND_H = { crit: 6, warn: 6, low: 24 };   // reminder interval for ongoing problems\nconst EXPECTED_CONTAINERS = {         // name -> severity when not running / unhealthy / missing\n  'lunae-wordpress-1': 'crit',\n  'lunae-db-1': 'crit',\n  'lunae-listmonk-1': 'warn',\n  'lunae-listmonk-db-1': 'warn',\n  'n8n-n8n-1': 'warn',\n  'minecraft-fabric': 'warn',\n};\nconst WPCRON_TIMER = 'lunae-wpcron.timer';\nconst TZ = 'Europe/Warsaw';\n// ============================================\n\nconst nowMs = Date.now();\nconst nowIso = new Date(nowMs).toISOString();\nconst SEV_RANK = { low: 1, warn: 2, crit: 3 };\n\n// ---------- helpers ----------\nconst bad = new Map();        // key -> { sev, title, detail, confirm }\nconst okKeys = new Set();\nconst unknownKeys = new Set();\nconst families = [];          // key prefixes fully evaluated this run\nconst events = [];            // one-off notifications (e.g. container restart)\nconst metaUpserts = [];\n\nfunction problem(key, sev, title, detail, confirm) {\n  bad.set(key, { sev, title, detail: String(detail || '').slice(0, 300), confirm: confirm || 1 });\n}\nfunction ok(key) { okKeys.add(key); }\nfunction unknown(key) { unknownKeys.add(key); }\nfunction num(v) { return typeof v === 'number' && isFinite(v) ? v : null; }\nfunction fmtNum(n, d) { return Number(n).toLocaleString('pl-PL', { maximumFractionDigits: d === undefined ? 1 : d }); }\nfunction plOrders(n) { const t = n % 100, u = n % 10; return n === 1 ? 'zamówienie' : (u >= 2 && u <= 4 && (t < 12 || t > 14)) ? 'zamówienia' : 'zamówień'; }\nfunction fmtSec(ms) { return fmtNum(ms / 1000, 1) + ' s'; }\nfunction fmtDur(ms) {\n  const m = Math.max(0, Math.round(ms / 60000));\n  if (m < 60) return m + ' min';\n  const h = Math.floor(m / 60), mm = m % 60;\n  if (h < 48) return h + ' h' + (mm ? ' ' + mm + ' min' : '');\n  const d = Math.floor(h / 24), hh = h % 24;\n  return d + ' d' + (hh ? ' ' + hh + ' h' : '');\n}\nfunction safeFirst(nodeName) {\n  try { const it = $(nodeName).first(); return it ? it.json : null; } catch (e) { return null; }\n}\n\n// ---------- previous state ----------\nconst rows = $input.all().map(i => i.json).filter(r => r && r.check_key);\nconst state = {};\nfor (const r of rows) state[r.check_key] = r;\n\n// ---------- 1. HTTP checks ----------\nconst httpResults = (safeFirst('Collect HTTP results') || {}).results || [];\nfor (const r of httpResults) {\n  const key = 'http:' + r.key;\n  const slowKey = 'slow:' + r.key;\n  const status = Number(r.status_code) || 0;\n  let reason = '';\n  if (r.error) reason = 'brak odpowiedzi (' + String(r.error).slice(0, 120) + ')';\n  else if (status !== Number(r.expect_status || 200)) reason = 'HTTP ' + status;\n  else if (!r.marker_ok) reason = 'HTTP ' + status + ', ale brak oczekiwanej treści';\n  if (reason) {\n    problem(key, r.severity || 'crit', r.label, reason + (r.error ? '' : ' (' + fmtSec(r.ms) + ')'), HTTP_CONFIRM_RUNS);\n    unknown(slowKey);\n  } else {\n    ok(key);\n    if (Number(r.ms) > SLOW_MS) problem(slowKey, 'warn', r.label + ' wolno odpowiada', fmtSec(r.ms) + ' (próg ' + fmtSec(SLOW_MS) + ')', HTTP_CONFIRM_RUNS);\n    else ok(slowKey);\n  }\n}\n\n// ---------- 2. host.json ----------\nconst parsed = safeFirst('Parse host.json') || {};\nconst readOut = safeFirst('Read host.json') || {};\nlet host = parsed && parsed.data && typeof parsed.data === 'object' ? parsed.data : null;\nif (host && !host.generated_at) host = null;\nif (!host) {\n  const err = (parsed.error && (parsed.error.message || parsed.error)) || (readOut.error && (readOut.error.message || readOut.error)) || 'plik nie istnieje lub jest pusty';\n  problem('hostfile:missing', 'warn', 'Status serwera (host.json)', 'nie można odczytać: ' + String(err).slice(0, 150), 2);\n  unknown('hostfile:stale');\n} else {\n  ok('hostfile:missing');\n  const genMs = Date.parse(host.generated_at);\n  const ageMin = isNaN(genMs) ? Infinity : (nowMs - genMs) / 60000;\n  if (ageMin > HOST_STALE_MIN) {\n    problem('hostfile:stale', 'warn', 'Status serwera nieaktualny', 'host.json sprzed ' + (isFinite(ageMin) ? fmtDur(ageMin * 60000) : '?') + ' — czy działa n8n-host-status.timer?');\n  } else {\n    ok('hostfile:stale');\n\n    // disk\n    const used = num(host.disk && host.disk.used_pct);\n    if (used === null) unknown('host:disk');\n    else if (used >= DISK_CRIT_PCT) problem('host:disk', 'crit', 'Dysk ' + (host.disk.mount || '/'), fmtNum(used, 0) + '% zajęte (wolne ' + fmtNum(num(host.disk.free_gb) || 0) + ' GB)');\n    else if (used >= DISK_WARN_PCT) problem('host:disk', 'warn', 'Dysk ' + (host.disk.mount || '/'), fmtNum(used, 0) + '% zajęte (wolne ' + fmtNum(num(host.disk.free_gb) || 0) + ' GB)');\n    else ok('host:disk');\n\n    // memory\n    const avail = num(host.memory && host.memory.available_mb);\n    if (avail === null) unknown('host:memory');\n    else if (avail < MEM_MIN_AVAILABLE_MB) problem('host:memory', 'warn', 'Mało pamięci RAM', 'dostępne ' + fmtNum(avail, 0) + ' MB z ' + fmtNum(num(host.memory.total_mb) || 0, 0) + ' MB');\n    else ok('host:memory');\n\n    // containers\n    const containers = Array.isArray(host.containers) ? host.containers : null;\n    const missing = Array.isArray(host.expected_containers_missing) ? host.expected_containers_missing : null;\n    if (containers && (containers.length || (missing && missing.length))) {\n      families.push('host:container:');\n      for (const name of Object.keys(EXPECTED_CONTAINERS)) {\n        const key = 'host:container:' + name;\n        const sev = EXPECTED_CONTAINERS[name];\n        const c = containers.find(x => x && x.name === name);\n        if ((missing && missing.includes(name)) || !c) problem(key, sev, 'Kontener ' + name, 'nie istnieje');\n        else if (c.state === null || c.state === undefined) unknown(key);\n        else if (c.state !== 'running') problem(key, sev, 'Kontener ' + name, 'stan: ' + c.state);\n        else if (c.health === 'unhealthy') problem(key, sev, 'Kontener ' + name, 'healthcheck: unhealthy');\n        else ok(key);\n      }\n      for (const c of containers) {\n        if (!c || !c.name) continue;\n        const rc = num(c.restart_count);\n        if (rc === null) continue;\n        const mkey = 'meta:restart:' + c.name;\n        const prev = state[mkey] ? num(Number(state[mkey].value)) : null;\n        if (prev !== null && rc > prev) {\n          events.push({ sev: 'warn', title: 'Kontener ' + c.name + ' zrestartował się', detail: 'restart_count ' + prev + ' → ' + rc });\n        }\n        if (prev === null || rc !== prev) {\n          metaUpserts.push({ check_key: mkey, status: 'meta', severity: '', since: nowIso, last_notified: '', fail_count: 0, detail: '', value: rc });\n        }\n      }\n    }\n\n    // failed systemd units\n    if (Array.isArray(host.failed_units)) {\n      families.push('host:unit:');\n      for (const u of host.failed_units) {\n        const name = typeof u === 'string' ? u : (u && (u.unit || u.name));\n        if (name) problem('host:unit:' + name, 'warn', 'Usługa systemd ' + name, 'stan: failed');\n      }\n    }\n\n    // backups\n    const b = host.backups || {};\n    const lunaeAge = num(b.lunae_last_success_age_h) !== null ? num(b.lunae_last_success_age_h) : num(b.lunae_newest_db_dump_age_h);\n    if (lunaeAge === null) unknown('host:backup_lunae');\n    else if (lunaeAge > BACKUP_MAX_AGE_H) problem('host:backup_lunae', 'warn', 'Kopia zapasowa sklepu', 'ostatnia udana ' + fmtNum(lunaeAge, 0) + ' h temu (próg ' + BACKUP_MAX_AGE_H + ' h)');\n    else ok('host:backup_lunae');\n    const n8nAge = num(b.n8n_newest_age_h);\n    if (n8nAge === null) unknown('host:backup_n8n');\n    else if (n8nAge > BACKUP_MAX_AGE_H) problem('host:backup_n8n', 'warn', 'Kopia zapasowa n8n', 'najnowsza ' + fmtNum(n8nAge, 0) + ' h temu (próg ' + BACKUP_MAX_AGE_H + ' h)');\n    else ok('host:backup_n8n');\n\n    // wp-cron timer\n    const timers = Array.isArray(host.timers) ? host.timers : [];\n    const t = timers.find(x => x && x.unit === WPCRON_TIMER);\n    if (!t || t.active === null || t.active === undefined) unknown('host:wpcron_timer');\n    else if (t.active !== 'active') problem('host:wpcron_timer', 'warn', 'WP-Cron (' + WPCRON_TIMER + ')', 'timer nieaktywny (' + t.active + ') — zadania WooCommerce nie ruszą');\n    else ok('host:wpcron_timer');\n\n    // low priority\n    if (host.reboot_required === true) problem('host:reboot', 'low', 'Serwer wymaga restartu', 'po aktualizacjach (reboot-required)');\n    else if (host.reboot_required === false) ok('host:reboot');\n    else unknown('host:reboot');\n\n    const cli = num(host.stale_cli_containers);\n    if (cli === null) unknown('host:stale_cli');\n    else if (cli >= STALE_CLI_MAX) problem('host:stale_cli', 'low', 'Stare kontenery wp-cli', cli + ' szt. (docker container prune?)');\n    else ok('host:stale_cli');\n\n    if (Array.isArray(host.errors) && host.errors.length) problem('host:probe_errors', 'low', 'host-status.sh: błędy sond', host.errors.slice(0, 3).join('; '));\n    else if (Array.isArray(host.errors)) ok('host:probe_errors');\n  }\n}\n\n// ---------- 3. WooCommerce failed orders ----------\nconst woo = safeFirst('Woo failed orders (24 h)') || {};\nconst AUTH_RE = /401|403|unauthori[sz]ed|forbidden|credential|consumer|woocommerce_rest_cannot|authenticat/i;\nif (woo.error) {\n  const msg = String(woo.error.message || woo.error.description || JSON.stringify(woo.error)).slice(0, 200);\n  if (AUTH_RE.test(msg) || [401, 403].includes(Number(woo.error.httpCode))) {\n    problem('woo:auth', 'low', 'WooCommerce API: brak dostępu', 'dane logowania nieuzupełnione lub błędne (' + msg.slice(0, 80) + ')');\n    unknown('woo:api');\n  } else {\n    problem('woo:api', 'warn', 'WooCommerce API', 'błąd: ' + msg, HTTP_CONFIRM_RUNS);\n    ok('woo:auth');\n  }\n  unknown('woo:failed_orders');\n} else {\n  const sc = Number(woo.statusCode) || 0;\n  if (sc === 401 || sc === 403) {\n    problem('woo:auth', 'low', 'WooCommerce API: brak dostępu', 'HTTP ' + sc + ' — uzupełnij klucze API w n8n (WooCommerce · lunae.pl)');\n    ok('woo:api'); unknown('woo:failed_orders');\n  } else if (sc !== 200) {\n    problem('woo:api', 'warn', 'WooCommerce API', 'HTTP ' + (sc || '?'), HTTP_CONFIRM_RUNS);\n    ok('woo:auth'); unknown('woo:failed_orders');\n  } else {\n    ok('woo:auth'); ok('woo:api');\n    let body = woo.body;\n    if (typeof body === 'string') { try { body = JSON.parse(body); } catch (e) { body = null; } }\n    if (!Array.isArray(body)) {\n      problem('woo:api', 'warn', 'WooCommerce API', 'nieoczekiwana odpowiedź (nie lista zamówień)', HTTP_CONFIRM_RUNS);\n      unknown('woo:failed_orders');\n    } else if (body.length >= WOO_FAILED_24H_MAX) {\n      const nums = body.slice(0, 8).map(o => '#' + (o.number || o.id) + (o.payment_method_title ? ' (' + o.payment_method_title + ')' : '')).join(', ');\n      problem('woo:failed_orders', 'warn', 'Nieudane płatności', body.length + (body.length >= 50 ? '+' : '') + ' ' + plOrders(body.length) + ' ze statusem „nieudane” w 24 h: ' + nums + ' — sprawdź Przelewy24');\n    } else ok('woo:failed_orders');\n  }\n}\n\n// ---------- 4. state transitions ----------\nconst newItems = [], reminders = [], recoveries = [], upserts = [];\n\nfor (const [key, p] of bad) {\n  const prev = state[key];\n  const was = prev && prev.status === 'problem';\n  const failCount = was ? (Number(prev.fail_count) || 0) + 1 : 1;\n  const since = was && prev.since ? prev.since : nowIso;\n  let lastNotified = was && prev.last_notified ? prev.last_notified : '';\n  if (failCount >= p.confirm) {\n    if (!lastNotified) {\n      newItems.push(p); lastNotified = nowIso;\n    } else if ((SEV_RANK[p.sev] || 0) > (SEV_RANK[prev.severity] || 0)) {\n      newItems.push(Object.assign({}, p, { escalated: true })); lastNotified = nowIso;\n    } else {\n      const lastMs = Date.parse(lastNotified);\n      if (isNaN(lastMs) || nowMs - lastMs >= (REMIND_H[p.sev] || 6) * 3600000) {\n        reminders.push(Object.assign({}, p, { since })); lastNotified = nowIso;\n      }\n    }\n  }\n  upserts.push({ check_key: key, status: 'problem', severity: p.sev, since, last_notified: lastNotified, fail_count: failCount, detail: (p.title + ' — ' + p.detail).slice(0, 400), value: prev && prev.value !== undefined ? prev.value : null });\n}\n\nfor (const key of Object.keys(state)) {\n  const prev = state[key];\n  if (prev.status !== 'problem' || bad.has(key) || unknownKeys.has(key)) continue;\n  const evaluated = okKeys.has(key) || families.some(f => key.startsWith(f));\n  if (!evaluated) continue;\n  if (prev.last_notified) {\n    const title = String(prev.detail || key).split(' — ')[0];\n    const sinceMs = Date.parse(prev.since);\n    recoveries.push({ title, dur: isNaN(sinceMs) ? '' : fmtDur(nowMs - sinceMs) });\n  }\n  upserts.push({ check_key: key, status: 'ok', severity: '', since: nowIso, last_notified: '', fail_count: 0, detail: '', value: prev.value !== undefined ? prev.value : null });\n}\nfor (const m of metaUpserts) upserts.push(m);\nfor (const e of events) newItems.push(e);\n\n// ---------- 5. message ----------\nconst lines = [];\nconst stamp = DateTime.fromMillis(nowMs).setZone(TZ).toFormat('dd.LL HH:mm');\nconst lowTag = p => p.sev === 'low' ? ' _(niski priorytet)_' : '';\nif (newItems.length || reminders.length || recoveries.length) lines.push('**lunae · monitoring** — ' + stamp);\nif (newItems.length) {\n  const hasCrit = newItems.some(p => p.sev === 'crit');\n  lines.push((hasCrit ? '🔴' : '🟡') + ' **Nowe problemy**');\n  for (const p of newItems) lines.push('• **' + p.title + '**: ' + p.detail + (p.escalated ? ' _(pogorszenie)_' : '') + lowTag(p));\n}\nif (reminders.length) {\n  const hasCrit = reminders.some(p => p.sev === 'crit');\n  lines.push((hasCrit ? '🔴' : '🟡') + ' **Nadal trwa**');\n  for (const p of reminders) {\n    const sMs = Date.parse(p.since);\n    lines.push('• **' + p.title + '**: ' + p.detail + (isNaN(sMs) ? '' : ' — od ' + fmtDur(nowMs - sMs)) + lowTag(p));\n  }\n}\nif (recoveries.length) {\n  lines.push('🟢 **Naprawione**');\n  for (const r of recoveries) lines.push('• ' + r.title + (r.dur ? ' — po ' + r.dur : ''));\n}\nlet content = lines.join('\\n');\nif (content.length > 1990) content = content.slice(0, 1985) + '\\n…';\n\nreturn [{ json: {\n  has_message: content.length > 0,\n  content,\n  upserts,\n  summary: {\n    checked_at: nowIso,\n    problems: [...bad.keys()],\n    new: newItems.length, reminders: reminders.length, recovered: recoveries.length,\n    http_ms: Object.fromEntries(httpResults.map(r => [r.key, r.ms])),\n  },\n} }];\n"
+      },
+      "id": "20d986ca-e126-4e8e-af73-8ab74985efdc",
+      "name": "Evaluate checks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "t0",
+              "name": "t0",
+              "value": "={{ $now.toMillis() }}",
+              "type": "number"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "3d9cd691-0016-490a-8ffc-ce43ff72d88b",
+      "name": "Mark start",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        672,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cache-Control",
+              "value": "no-cache"
+            },
+            {
+              "name": "Pragma",
+              "value": "no-cache"
+            },
+            {
+              "name": "User-Agent",
+              "value": "lunae-healthcheck/1.0 (n8n)"
+            }
+          ]
+        },
+        "options": {
+          "redirect": {
+            "redirect": {
+              "maxRedirects": 5
+            }
+          },
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "text",
+              "outputPropertyName": "body"
+            }
+          },
+          "timeout": 15000
+        }
+      },
+      "id": "dc82f0f5-b222-47d9-b3fe-d0a5fed494e5",
+      "name": "GET URL",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        432
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ms",
+              "name": "ms",
+              "value": "={{ $now.toMillis() - $('Mark start').item.json.t0 }}",
+              "type": "number"
+            },
+            {
+              "id": "key",
+              "name": "key",
+              "value": "={{ $('Mark start').item.json.key }}",
+              "type": "string"
+            },
+            {
+              "id": "label",
+              "name": "label",
+              "value": "={{ $('Mark start').item.json.label }}",
+              "type": "string"
+            },
+            {
+              "id": "url",
+              "name": "url",
+              "value": "={{ $('Mark start').item.json.url }}",
+              "type": "string"
+            },
+            {
+              "id": "severity",
+              "name": "severity",
+              "value": "={{ $('Mark start').item.json.severity }}",
+              "type": "string"
+            },
+            {
+              "id": "expect_status",
+              "name": "expect_status",
+              "value": "={{ $('Mark start').item.json.expect_status }}",
+              "type": "number"
+            },
+            {
+              "id": "status_code",
+              "name": "status_code",
+              "value": "={{ $json.statusCode ?? 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "marker_ok",
+              "name": "marker_ok",
+              "value": "={{ (() => { const b = $json.body ?? $json.data; const s = typeof b === 'string' ? b : (b ? JSON.stringify(b) : ''); return s.includes($('Mark start').item.json.marker); })() }}",
+              "type": "boolean"
+            },
+            {
+              "id": "error",
+              "name": "error",
+              "value": "={{ $json.error ? String($json.error.message || $json.error.description || JSON.stringify($json.error)).slice(0, 200) : '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "503bf8f1-3757-4189-96e1-811af3216ae3",
+      "name": "Record result",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1104,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "377a66b1-dbf5-4b9f-9810-9ee79880bbbb",
+      "name": "Each URL",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        448,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_message }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0711426b-db66-4434-bf1c-ec3d1b3bbc0b",
+      "name": "Anything to report?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1984,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.content }}",
+        "options": {}
+      },
+      "id": "8f9a6cb5-ca01-413c-b4cf-9affd64ed9ab",
+      "name": "Post to Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        2208,
+        80
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "REDACTED",
+          "name": "Discord · lunae (webhook)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "rows",
+              "name": "rows",
+              "value": "={{ $('Evaluate checks').first().json.upserts }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "db6ce8a4-1885-461a-8089-62f21a0632a5",
+      "name": "State rows",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2432,
+        192
+      ],
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "rows",
+        "options": {}
+      },
+      "id": "67917f52-5a59-4c97-a3da-7974fca73c20",
+      "name": "Split rows",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "ekDybfkORT4elRGu",
+          "cachedResultName": "lunae_health_state"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "check_key",
+              "keyValue": "={{ $json.check_key }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "check_key",
+              "displayName": "check_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "severity",
+              "displayName": "severity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "since",
+              "displayName": "since",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "last_notified",
+              "displayName": "last_notified",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "fail_count",
+              "displayName": "fail_count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "detail",
+              "displayName": "detail",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "value",
+              "displayName": "value",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "18fd32d6-cd4d-4ad6-8d71-4dd5b2d767eb",
+      "name": "Save state",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2864,
+        192
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## lunae · Health check\nCo 5 min: 6 publicznych URL-i (czas odpowiedzi, treść), `host.json` z serwera (dysk, RAM, kontenery, kopie, timery), nieudane płatności Woo z 24 h.\nStan w tabeli `lunae_health_state`. Discord tylko przy zmianie: nowy problem, przypomnienie co 6 h (niski priorytet co 24 h), naprawa. Progi: stałe na górze węzła **Evaluate checks**; adresy w **Define HTTP checks**.",
+        "height": 224,
+        "width": 384,
+        "color": 4
+      },
+      "id": "785fc814-b83b-4d5d-8542-a96866cb415e",
+      "name": "Sticky Note eac9f7df",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        80,
+        32
+      ]
+    }
+  ],
+  "connections": {
+    "Every 5 min": {
+      "main": [
+        [
+          {
+            "node": "Define HTTP checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Define HTTP checks": {
+      "main": [
+        [
+          {
+            "node": "Each URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect HTTP results": {
+      "main": [
+        [
+          {
+            "node": "Read host.json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read host.json": {
+      "main": [
+        [
+          {
+            "node": "Parse host.json",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse host.json": {
+      "main": [
+        [
+          {
+            "node": "Woo failed orders (24 h)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Woo failed orders (24 h)": {
+      "main": [
+        [
+          {
+            "node": "Load state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load state": {
+      "main": [
+        [
+          {
+            "node": "Evaluate checks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate checks": {
+      "main": [
+        [
+          {
+            "node": "Anything to report?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark start": {
+      "main": [
+        [
+          {
+            "node": "GET URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET URL": {
+      "main": [
+        [
+          {
+            "node": "Record result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record result": {
+      "main": [
+        [
+          {
+            "node": "Each URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Each URL": {
+      "main": [
+        [
+          {
+            "node": "Collect HTTP results",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything to report?": {
+      "main": [
+        [
+          {
+            "node": "Post to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "State rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Discord": {
+      "main": [
+        [
+          {
+            "node": "State rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "State rows": {
+      "main": [
+        [
+          {
+            "node": "Split rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split rows": {
+      "main": [
+        [
+          {
+            "node": "Save state",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "none",
+    "binaryMode": "separate"
+  }
+}

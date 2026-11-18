@@ -1,0 +1,383 @@
+{
+  "name": "lunae · Błędy workflowów → Discord",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "19499ef9-716c-406c-bbf2-563a81a8d9a7",
+      "name": "Workflow failed",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Builds the Discord text + a dedupe key (workflow + node + normalised message).\nconst BASE_URL = 'https://n8n.example.com';\nconst MAX_MSG = 300;\n\nconst d = $input.first().json;\nconst wf = d.workflow || {};\nconst ex = d.execution || null;\nconst trg = d.trigger || null;\nconst err = (ex && ex.error) || (trg && trg.error) || {};\n\nconst wfId = String(wf.id || '');\nconst wfName = wf.name || '(bez nazwy)';\nconst nodeName = (ex && ex.lastNodeExecuted) || (err.node && err.node.name) || (trg ? 'trigger' : '?');\nlet message = String(err.message || err.description || 'nieznany błąd').replace(/\\s+/g, ' ').trim();\nif (err.description && err.message && !message.includes(String(err.description))) {\n  message = (message + ' — ' + String(err.description).replace(/\\s+/g, ' ').trim());\n}\nconst short = message.length > MAX_MSG ? message.slice(0, MAX_MSG - 1) + '…' : message;\n\nconst link = ex && ex.id\n  ? BASE_URL + '/workflow/' + wfId + '/executions/' + ex.id\n  : BASE_URL + '/workflow/' + wfId;\n\n// numbers/ids vary between runs of the same failure -> strip them from the key\nconst normalised = message.toLowerCase().replace(/[0-9a-f]{8,}/g, '#').replace(/\\d+/g, '#').slice(0, 160);\nconst alertKey = (wfId + '|' + nodeName + '|' + normalised).slice(0, 250);\n\nconst lines = [\n  '⚠️ **Błąd workflowu:** ' + wfName,\n  '**Węzeł:** ' + nodeName + (trg ? ' (wyzwalacz)' : ''),\n  '**Błąd:** ' + short,\n  '**Wykonanie:** <' + link + '>',\n];\n\nreturn [{ json: { alert_key: alertKey, workflow_id: wfId, content: lines.join('\\n').slice(0, 1900) } }];"
+      },
+      "id": "6d90a9dc-4e59-4ae5-bd5d-f53d45730a84",
+      "name": "Build alert",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "Wj2VCGOA7AKZG5dI",
+          "cachedResultName": "lunae_error_alerts"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "alert_key",
+              "keyValue": "={{ $json.alert_key }}"
+            }
+          ]
+        },
+        "limit": 1
+      },
+      "id": "9d5fd262-29af-4ad1-9801-76c35b1d21ed",
+      "name": "Find previous alert",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        304
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const WINDOW_MIN = 60; // same workflow + node + message at most once per hour\nconst alert = $('Build alert').first().json;\nconst row = $input.all().map(i => i.json).find(r => r && r.alert_key === alert.alert_key);\nconst now = Date.now();\nconst last = row && row.last_sent ? Date.parse(row.last_sent) : NaN;\nconst suppressedBefore = row && row.suppressed ? Number(row.suppressed) : 0;\nconst withinWindow = !isNaN(last) && (now - last) < WINDOW_MIN * 60 * 1000;\nlet content = alert.content;\nif (!withinWindow && suppressedBefore > 0) {\n  content += '\\n_(+' + suppressedBefore + ' takich samych błędów pominiętych od poprzedniego powiadomienia)_';\n}\nreturn [{ json: {\n  send: !withinWindow,\n  alert_key: alert.alert_key,\n  workflow_id: alert.workflow_id,\n  content,\n  last_sent: withinWindow ? row.last_sent : new Date(now).toISOString(),\n  suppressed: withinWindow ? suppressedBefore + 1 : 0,\n} }];"
+      },
+      "id": "a86ce000-87c8-43f3-8d68-1bc847dd9bfb",
+      "name": "Rate limit (1 h)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.send }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0bfd0026-724c-41d5-a54a-52b498d444eb",
+      "name": "Send now?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "={{ $json.content }}",
+        "options": {}
+      },
+      "id": "e0b3cb27-a688-438e-b6f4-1646094f6dbd",
+      "name": "Post to Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        208
+      ],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "REDACTED",
+          "name": "Discord · lunae (webhook)"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "Wj2VCGOA7AKZG5dI",
+          "cachedResultName": "lunae_error_alerts"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "alert_key",
+              "keyValue": "={{ $('Rate limit (1 h)').item.json.alert_key }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "alert_key": "={{ $('Rate limit (1 h)').item.json.alert_key }}",
+            "workflow_id": "={{ $('Rate limit (1 h)').item.json.workflow_id }}",
+            "last_sent": "={{ $('Rate limit (1 h)').item.json.last_sent }}",
+            "suppressed": "={{ $('Rate limit (1 h)').item.json.suppressed }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "alert_key",
+              "displayName": "alert_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "workflow_id",
+              "displayName": "workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "last_sent",
+              "displayName": "last_sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "suppressed",
+              "displayName": "suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "9a588805-8fd5-4674-859f-0fc23cc9b0ef",
+      "name": "Remember alert",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1328,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "Wj2VCGOA7AKZG5dI",
+          "cachedResultName": "lunae_error_alerts"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "alert_key",
+              "keyValue": "={{ $json.alert_key }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "alert_key": "={{ $json.alert_key }}",
+            "workflow_id": "={{ $json.workflow_id }}",
+            "last_sent": "={{ $json.last_sent }}",
+            "suppressed": "={{ $json.suppressed }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "alert_key",
+              "displayName": "alert_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "workflow_id",
+              "displayName": "workflow_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "last_sent",
+              "displayName": "last_sent",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "readOnly": false,
+              "removed": false
+            },
+            {
+              "id": "suppressed",
+              "displayName": "suppressed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "readOnly": false,
+              "removed": false
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "0418fc0f-924e-4dc8-b415-c2d4b0eea732",
+      "name": "Count suppressed",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1104,
+        432
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Błędy workflowów → Discord\nUstaw ten workflow jako *Error workflow* w ustawieniach innych workflowów lunae.\nTen sam workflow + węzeł + komunikat (liczby pomijane) trafia na Discord najwyżej raz na godzinę; pominięte są zliczane w tabeli `lunae_error_alerts` i doklejane do następnego powiadomienia.",
+        "height": 224,
+        "width": 384,
+        "color": 4
+      },
+      "id": "d9c35878-3895-4ff5-851f-ab5f7fdeed32",
+      "name": "Sticky Note 174e4041",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        192,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "Workflow failed": {
+      "main": [
+        [
+          {
+            "node": "Build alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build alert": {
+      "main": [
+        [
+          {
+            "node": "Find previous alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find previous alert": {
+      "main": [
+        [
+          {
+            "node": "Rate limit (1 h)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rate limit (1 h)": {
+      "main": [
+        [
+          {
+            "node": "Send now?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send now?": {
+      "main": [
+        [
+          {
+            "node": "Post to Discord",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Count suppressed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Post to Discord": {
+      "main": [
+        [
+          {
+            "node": "Remember alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "binaryMode": "separate"
+  }
+}

@@ -1,0 +1,10 @@
+## Common rules for phase-2 agents (home, catalog, product, cart)
+
+- Read docs/DESIGN.md (whole), docs/reports/foundation.md and docs/reports/data.md first. Look at qa/ref-*.png and qa/current-lunae-home*.png. Look at the real product photos in data/images/ before designing.
+- The foundation (theme.json tokens, fonts, header/footer, base.css, asset loader, tools/playground.sh, tools/shot.sh) and the data import (real lunae.pl catalog, editorial images, pages) already exist. Build on them; do not edit files you do not own (DESIGN.md §5). If you need a token or foundation change, work around it inside your own files and list the request in your report.
+- Other agents work in parallel in their own worktrees on other areas; Claude merges all branches, so never delete or rewrite files outside your ownership (merge conflicts) and only use your own port.
+- Use your own Playground port (DESIGN.md §6). Iterate visually: screenshot desktop 1440 + mobile 390, look at the images critically against the brief (Zara-minimal, photo-first, tiny uppercase UI, Cormorant for Latin names, no clutter), fix, repeat. Aim for at least 3 visual iterations. Also check keyboard/focus behaviour and that there are no PHP notices/JS console errors (Chrome `--enable-logging=stderr --v=0` or a tiny CDP script are fine).
+- WooCommerce: prefer WooCommerce blocks (Product Collection, Product Image/Title/Price, Product Gallery, Add to Cart with Options, filter blocks, Cart/Checkout blocks, Mini-Cart). Keep core behaviour (variations, AJAX add-to-cart, stock, checkout extensibility) working; test it, e.g. actually add a variable product to the cart and reach checkout.
+- Code quality: small, readable, commented where non-obvious; Polish UI strings wrapped in translation functions; escape output; no jQuery added; no external CDNs.
+- Do not run git. Stay inside the repo and /tmp.
+- Finish with docs/reports/<area>.md (what you built, files, screenshot list, known issues, requests for other areas) and leave your final screenshots in qa/shots/<area>-*.png.

@@ -1,0 +1,6 @@
+[Unit]
+Description=Crop Apaczka A4 waybills to the label and print on Godex G330
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/apaczka-label-print

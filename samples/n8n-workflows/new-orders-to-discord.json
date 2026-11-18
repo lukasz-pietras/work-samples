@@ -1,0 +1,322 @@
+{
+  "name": "lunae · Nowe zamówienia → Discord",
+  "nodes": [
+    {
+      "id": "9511cb55-6690-41f9-893c-b7368687265a",
+      "name": "Co 5 minut",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "10ed0bcc-5c03-4c3e-8a6e-2506b5c25bc9",
+      "name": "Pobierz zmienione zamówienia (2 h)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 5000,
+      "position": [
+        240,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://lunae.pl/wp-json/wc/v3/orders",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "wooCommerceApi",
+        "sendQuery": true,
+        "specifyQuery": "keypair",
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "modified_after",
+              "value": "={{ $now.minus({ hours: 2 }).toUTC().toFormat(\"yyyy-MM-dd'T'HH:mm:ss\") }}"
+            },
+            {
+              "name": "dates_are_gmt",
+              "value": "true"
+            },
+            {
+              "name": "status",
+              "value": "any"
+            },
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "orderby",
+              "value": "modified"
+            },
+            {
+              "name": "order",
+              "value": "desc"
+            },
+            {
+              "name": "_fields",
+              "value": "id,number,status,currency,total,date_created_gmt,date_modified_gmt,date_paid_gmt,payment_method,payment_method_title,shipping_lines,line_items,meta_data,shipping.city,billing.city"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "credentials": {
+        "wooCommerceApi": {
+          "id": "REDACTED",
+          "name": "WooCommerce · lunae.pl (read-only)"
+        }
+      }
+    },
+    {
+      "id": "7cc29efc-0fb5-41e9-8931-840ff06c464c",
+      "name": "Wyznacz zdarzenia",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// lunae · Nowe zamówienia → Discord — classify recently modified orders into notification events.\n// Events: new (processing/completed/on-hold, paid or created within WINDOW), failed, pending60 (unpaid > 60 min).\n// Never outputs customer names, emails, phones or street addresses.\nconst ADMIN_URL = 'https://lunae.pl/wp-admin/admin.php?page=wc-orders&action=edit&id=';\nconst WINDOW_MS = 2 * 60 * 60 * 1000;      // only orders paid/created in the last 2 h count as \"new\" (no history spam)\nconst PENDING_MS = 60 * 60 * 1000;         // pending longer than this -> \"porzucona płatność?\"\nconst MAX_AGE_MS = 24 * 60 * 60 * 1000;    // ignore failed/pending orders older than 24 h\nconst PAID_LIKE = ['processing', 'completed', 'on-hold'];\nconst now = Date.now();\n\nfunction gmt(s) {\n  if (!s) return null;\n  const str = String(s);\n  const v = Date.parse(/Z$|[+-]\\d\\d:\\d\\d$/.test(str) ? str : str + 'Z');\n  return isNaN(v) ? null : v;\n}\nfunction money(v, currency) {\n  const n = Number(v) || 0;\n  const parts = Math.abs(n).toFixed(2).split('.');\n  const intPart = parts[0].replace(/\\B(?=(\\d{3})+(?!\\d))/g, ' ');\n  const cur = !currency || currency === 'PLN' ? 'zł' : currency;\n  return (n < 0 ? '-' : '') + intPart + ',' + parts[1] + ' ' + cur;\n}\nfunction clip(s, max) {\n  s = String(s == null ? '' : s).trim();\n  if (!s) return '—';\n  return s.length > max ? s.slice(0, max - 1) + '…' : s;\n}\nfunction itemLine(li) {\n  let name = String(li.name || 'Produkt').trim();\n  const extras = [];\n  for (const m of (li.meta_data || [])) {\n    if (!m || typeof m.key !== 'string' || m.key.charAt(0) === '_') continue;\n    const raw = m.display_value != null ? m.display_value : m.value;\n    if (typeof raw !== 'string' && typeof raw !== 'number') continue;\n    const clean = String(raw).replace(/<[^>]*>/g, '').trim();\n    if (clean && clean.length <= 40 && name.indexOf(clean) === -1) extras.push(clean);\n  }\n  if (extras.length) name += ' – ' + extras.join(', ');\n  return '• ' + name + ' × ' + (Number(li.quantity) || 1);\n}\nfunction metaVal(o, key) {\n  const m = (o.meta_data || []).find(function (x) { return x && x.key === key; });\n  return m ? m.value : undefined;\n}\n\nconst out = [];\nconst seen = {};\nfor (const item of $input.all()) {\n  const o = item.json || {};\n  if (!o.id || !o.status || seen[o.id]) continue;\n  seen[o.id] = true;\n\n  const created = gmt(o.date_created_gmt);\n  const paid = gmt(o.date_paid_gmt);\n  let event = null;\n  let eventTime = null;\n  if (PAID_LIKE.indexOf(o.status) !== -1) {\n    eventTime = paid || created;\n    if (eventTime && now - eventTime <= WINDOW_MS) event = 'new';\n  } else if (o.status === 'failed') {\n    eventTime = gmt(o.date_modified_gmt) || created;\n    if (created && now - created <= MAX_AGE_MS) event = 'failed';\n  } else if (o.status === 'pending') {\n    eventTime = created;\n    if (created && now - created >= PENDING_MS && now - created <= MAX_AGE_MS) event = 'pending60';\n  }\n  if (!event) continue;\n\n  const number = o.number || o.id;\n  const total = money(o.total, o.currency);\n  const lines = (o.line_items || []).map(itemLine);\n  let itemsText = lines.slice(0, 15).join('\\n');\n  if (lines.length > 15) itemsText += '\\n… i ' + (lines.length - 15) + ' więcej';\n  if (!itemsText) itemsText = '—';\n\n  const ship = (o.shipping_lines || []).map(function (s) {\n    const cost = (Number(s.total) || 0) + (Number(s.total_tax) || 0);\n    return (s.method_title || 'Dostawa') + (cost > 0 ? ' (' + money(cost, o.currency) + ')' : ' (darmowa)');\n  }).join(', ');\n  const city = (o.shipping && o.shipping.city) || (o.billing && o.billing.city) || '';\n  const payment = o.payment_method_title || o.payment_method || '';\n  const invoiceAsk = metaVal(o, '_billing_invoice_ask');\n  const wantsInvoice = invoiceAsk === 'yes' || invoiceAsk === '1' || invoiceAsk === true || invoiceAsk === 1;\n  const link = ADMIN_URL + o.id;\n\n  let content, title, color, footer;\n  const fields = [\n    { name: 'Kwota', value: total, inline: true },\n    { name: 'Płatność', value: clip(payment, 100), inline: true },\n  ];\n  if (event === 'new') {\n    const onHold = o.status === 'on-hold';\n    content = (onHold ? '⏸️ Nowe zamówienie (czeka na wpłatę) #' : '🛍️ Nowe zamówienie #') + number + ' · ' + total;\n    title = 'Zamówienie #' + number + (onHold ? ' · czeka na wpłatę' : ' · opłacone');\n    color = onHold ? 0xF1C40F : 0x2ECC71;\n    fields.push({ name: 'Dostawa', value: clip(ship, 200), inline: true });\n    fields.push({ name: 'Miasto', value: clip(city, 60), inline: true });\n    if (wantsInvoice) fields.push({ name: 'Faktura', value: 'na firmę (prośba o FV)', inline: true });\n    footer = 'Status: ' + o.status;\n  } else if (event === 'failed') {\n    content = '⚠️ Nieudana płatność · #' + number + ' · ' + total;\n    title = 'Nieudana płatność #' + number;\n    color = 0xE74C3C;\n    fields.push({ name: 'Miasto', value: clip(city, 60), inline: true });\n    footer = 'Status: failed · klient może ponowić płatność';\n  } else {\n    const mins = Math.round((now - created) / 60000);\n    content = '⏳ Porzucona płatność? #' + number + ' · ' + total + ' · nieopłacone od ' + mins + ' min';\n    title = 'Nieopłacone zamówienie #' + number;\n    color = 0x95A5A6;\n    fields.push({ name: 'Miasto', value: clip(city, 60), inline: true });\n    footer = 'Status: pending > 60 min · jednorazowe powiadomienie';\n  }\n\n  const embed = {\n    title: title,\n    url: link,\n    color: color,\n    description: itemsText,\n    fields: fields,\n    footer: { text: footer },\n    timestamp: new Date(eventTime || now).toISOString(),\n  };\n\n  out.push({\n    json: {\n      order_key: o.id + ':' + event,\n      order_id: o.id,\n      event: event,\n      status: o.status,\n      content: content.slice(0, 1900),\n      embed_json: JSON.stringify(embed),\n    },\n  });\n}\nreturn out;\n"
+      }
+    },
+    {
+      "id": "8c425a3d-0087-49c8-a341-3617ef0fd22c",
+      "name": "Tylko jeszcze niewysłane",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        720,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "rowNotExists",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "n5YTOMAkTLjJIM6x",
+          "cachedResultName": "lunae_orders_notified"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "order_key",
+              "keyValue": "={{ $json.order_key }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "60598f66-fade-4176-8af8-4b91ab4224ba",
+      "name": "Wyślij na Discord",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "position": [
+        960,
+        0
+      ],
+      "parameters": {
+        "authentication": "webhook",
+        "operation": "sendLegacy",
+        "content": "={{ $json.content }}",
+        "options": {
+          "wait": true
+        },
+        "embeds": {
+          "values": [
+            {
+              "inputMethod": "json",
+              "json": "={{ $json.embed_json }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "REDACTED",
+          "name": "Discord · lunae (webhook)"
+        }
+      }
+    },
+    {
+      "id": "b692988f-807d-4e88-86f6-15ab3e33fb6d",
+      "name": "Zapisz jako wysłane",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "n5YTOMAkTLjJIM6x",
+          "cachedResultName": "lunae_orders_notified"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "order_key": "={{ $('Tylko jeszcze niewysłane').item.json.order_key }}",
+            "order_id": "={{ $('Tylko jeszcze niewysłane').item.json.order_id }}",
+            "event": "={{ $('Tylko jeszcze niewysłane').item.json.event }}",
+            "status": "={{ $('Tylko jeszcze niewysłane').item.json.status }}",
+            "notified_at": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "order_key",
+              "displayName": "order_key",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "order_id",
+              "displayName": "order_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "event",
+              "displayName": "event",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "notified_at",
+              "displayName": "notified_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "2b6b6b5e-1297-4373-8f51-d979ce7fb770",
+      "name": "Sticky Note dbc23377",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        208,
+        -96
+      ],
+      "parameters": {
+        "content": "## Nowe zamówienia → Discord\nCo 5 min pobiera zamówienia zmienione w ostatnich 2 h (WooCommerce, tylko odczyt).\n- **new**: processing/completed/on-hold, opłacone lub utworzone ≤ 2 h temu (brak spamu historią)\n- **failed**: nieudana płatność (≤ 24 h)\n- **pending60**: nieopłacone > 60 min (raz)\nDeduplikacja: data table `lunae_orders_notified` (klucz `id:event`), zapis dopiero po wysłaniu. Bez danych osobowych (tylko miasto).",
+        "color": 7,
+        "width": 1120,
+        "height": 224
+      }
+    }
+  ],
+  "connections": {
+    "Co 5 minut": {
+      "main": [
+        [
+          {
+            "node": "Pobierz zmienione zamówienia (2 h)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pobierz zmienione zamówienia (2 h)": {
+      "main": [
+        [
+          {
+            "node": "Wyznacz zdarzenia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wyznacz zdarzenia": {
+      "main": [
+        [
+          {
+            "node": "Tylko jeszcze niewysłane",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tylko jeszcze niewysłane": {
+      "main": [
+        [
+          {
+            "node": "Wyślij na Discord",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wyślij na Discord": {
+      "main": [
+        [
+          {
+            "node": "Zapisz jako wysłane",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true,
+    "timezone": "Europe/Warsaw"
+  }
+}
